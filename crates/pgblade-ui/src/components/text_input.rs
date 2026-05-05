@@ -6,6 +6,7 @@ use pgblade_core::highlighter::{TokenKind, highlight_sql};
 /// Uses GPUI's focus and keyboard system for text input.
 /// Supports both single-line (form fields) and multi-line (SQL editor) modes.
 pub struct TextInput {
+    id: ElementId,
     text: String,
     cursor: usize,
     focus_handle: FocusHandle,
@@ -16,7 +17,11 @@ pub struct TextInput {
 
 impl TextInput {
     pub fn new(cx: &mut Context<Self>, multiline: bool) -> Self {
+        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
         Self {
+            id: ElementId::Name(SharedString::from(format!("text-input-{n}"))),
             text: String::new(),
             cursor: 0,
             focus_handle: cx.focus_handle(),
@@ -485,8 +490,14 @@ impl Render for TextInput {
         let is_focused = self.focus_handle.is_focused(window);
 
         let mut container = div()
-            .id("text-input")
+            .id(self.id.clone())
             .track_focus(&self.focus_handle)
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, window: &mut Window, _cx| {
+                    this.focus_handle.focus(window);
+                }),
+            )
             .on_key_down(cx.listener(Self::handle_key_down))
             .size_full()
             .font_family("Monaco")
