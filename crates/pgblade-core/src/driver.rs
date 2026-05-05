@@ -3,6 +3,7 @@ use async_trait::async_trait;
 use crate::connection::ConnectionProfile;
 use crate::error::{ConnectionError, QueryError};
 use crate::result::ResultSet;
+use crate::schema::{ColumnInfo, SchemaInfo, TableInfo};
 
 /// Trait boundary for database drivers.
 ///
@@ -34,4 +35,13 @@ pub trait DatabaseSession: Send + Sync {
 
     /// The server version string (e.g., "PostgreSQL 16.2").
     fn server_version(&self) -> &str;
+
+    /// List all user-visible schemas.
+    async fn list_schemas(&self) -> Result<Vec<SchemaInfo>, QueryError>;
+
+    /// List tables and views in a schema.
+    async fn list_tables(&self, schema: &str) -> Result<Vec<TableInfo>, QueryError>;
+
+    /// List columns for a table.
+    async fn list_columns(&self, schema: &str, table: &str) -> Result<Vec<ColumnInfo>, QueryError>;
 }

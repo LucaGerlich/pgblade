@@ -106,4 +106,23 @@ impl DatabaseSession for PostgresSession {
     fn server_version(&self) -> &str {
         &self.server_version
     }
+
+    async fn list_schemas(&self) -> Result<Vec<pgblade_core::schema::SchemaInfo>, QueryError> {
+        crate::introspection::fetch_schemas(&self.client).await
+    }
+
+    async fn list_tables(
+        &self,
+        schema: &str,
+    ) -> Result<Vec<pgblade_core::schema::TableInfo>, QueryError> {
+        crate::introspection::fetch_tables(&self.client, schema).await
+    }
+
+    async fn list_columns(
+        &self,
+        schema: &str,
+        table: &str,
+    ) -> Result<Vec<pgblade_core::schema::ColumnInfo>, QueryError> {
+        crate::introspection::fetch_columns(&self.client, schema, table).await
+    }
 }

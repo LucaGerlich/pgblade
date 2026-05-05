@@ -1,3 +1,4 @@
+use gpui::prelude::FluentBuilder;
 use gpui::*;
 
 use pgblade_core::connection::{ConnectionId, ConnectionProfile, Environment, SslMode};
@@ -12,6 +13,7 @@ pub struct ConnectionModal {
     username: Entity<TextInput>,
     password: Entity<TextInput>,
     environment: Environment,
+    save_connection: bool,
     focus_handle: FocusHandle,
 }
 
@@ -22,6 +24,7 @@ pub enum ConnectionModalEvent {
     Connect {
         profile: ConnectionProfile,
         password: String,
+        save: bool,
     },
     /// User dismissed the modal.
     Dismiss,
@@ -56,6 +59,7 @@ impl ConnectionModal {
             username,
             password,
             environment: Environment::Local,
+            save_connection: true,
             focus_handle: cx.focus_handle(),
         }
     }
@@ -85,7 +89,11 @@ impl ConnectionModal {
             read_only_default: self.environment.is_production(),
         };
 
-        cx.emit(ConnectionModalEvent::Connect { profile, password });
+        cx.emit(ConnectionModalEvent::Connect {
+            profile,
+            password,
+            save: self.save_connection,
+        });
     }
 
     fn render_field(&self, label: &str, input: &Entity<TextInput>) -> impl IntoElement {
@@ -206,6 +214,51 @@ impl Render for ConnectionModal {
                     .child(self.render_field("Username", &self.username))
                     .child(self.render_field("Password", &self.password))
                     .child(self.render_env_selector())
+                    // Save connection checkbox
+                    .child(
+                        div()
+                            .id("save-connection-toggle")
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap_2()
+                            .mb_3()
+                            .cursor_pointer()
+                            .on_click(cx.listener(|this, _, _window, cx| {
+                                this.save_connection = !this.save_connection;
+                                cx.notify();
+                            }))
+                            .child(
+                                div()
+                                    .w(px(14.0))
+                                    .h(px(14.0))
+                                    .rounded_sm()
+                                    .border_1()
+                                    .border_color(rgb(0x555555))
+                                    .bg(if self.save_connection {
+                                        rgb(0x4fc1ff)
+                                    } else {
+                                        rgb(0x252525)
+                                    })
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .when(self.save_connection, |this| {
+                                        this.child(
+                                            div()
+                                                .text_xs()
+                                                .text_color(rgb(0x1a1a1a))
+                                                .child("\u{2713}"),
+                                        )
+                                    }),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(rgb(0xaaaaaa))
+                                    .child("Save connection"),
+                            ),
+                    )
                     // Connect button
                     .child(
                         div().mt_2().flex().justify_end().child(

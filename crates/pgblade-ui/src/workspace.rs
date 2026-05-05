@@ -4,11 +4,13 @@ use gpui::*;
 use crate::actions::{ExecuteQuery, NewConnection, ToggleSidebar};
 use crate::controller::AppController;
 use crate::modals::connection_modal::{ConnectionModal, ConnectionModalEvent};
-use crate::panes::{EditorArea, ResultArea, SchemaSidebar, StatusBar, Toolbar};
+use crate::modals::write_confirm::{WriteConfirmEvent, WriteConfirmModal};
+use crate::panes::{EditorArea, ResultArea, SchemaSidebar, SidebarEvent, StatusBar, Toolbar};
 
 use pgblade_core::connection::ConnectionState;
 use pgblade_core::event::AppEvent;
 use pgblade_core::query::QueryState;
+use pgblade_core::security::CredentialStore;
 
 pub struct Workspace {
     controller: Entity<AppController>,
@@ -18,13 +20,14 @@ pub struct Workspace {
     toolbar: Entity<Toolbar>,
     status_bar: Entity<StatusBar>,
     connection_modal: Option<Entity<ConnectionModal>>,
+    write_confirm_modal: Option<Entity<WriteConfirmModal>>,
     sidebar_visible: bool,
 }
 
 impl Workspace {
     pub fn new(cx: &mut Context<Self>) -> Self {
         let controller = cx.new(|_| AppController::new());
-        let sidebar = cx.new(|_| SchemaSidebar::new());
+        let sidebar = cx.new(SchemaSidebar::new);
         let editor_area = cx.new(EditorArea::new);
         let result_area = cx.new(|_| ResultArea::new());
         let toolbar = cx.new(|_| Toolbar::new());
@@ -32,6 +35,15 @@ impl Workspace {
 
         // Subscribe to controller events
         cx.subscribe(&controller, Self::handle_app_event).detach();
+
+        // Subscribe to sidebar events
+        cx.subscribe(&sidebar, Self::handle_sidebar_event).detach();
+
+        // Load saved connections and history on startup
+        controller.update(cx, |c, cx| {
+            c.load_saved_connections(cx);
+            c.load_history(cx);
+        });
 
         // Show connection modal on startup
         let modal = cx.new(ConnectionModal::new);
@@ -46,6 +58,7 @@ impl Workspace {
             toolbar,
             status_bar,
             connection_modal,
+            write_confirm_modal: None,
             sidebar_visible: true,
         }
     }
@@ -81,9 +94,20 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         match event {
-            ConnectionModalEvent::Connect { profile, password } => {
+            ConnectionModalEvent::Connect {
+                profile,
+                password,
+                save,
+            } => {
+                let profile_clone = profile.clone();
+                let password_clone = password.clone();
+                let should_save = *save;
+
                 self.controller.update(cx, |controller, cx| {
-                    controller.connect(profile.clone(), password.clone(), cx);
+                    if should_save {
+                        controller.save_connection(&profile_clone, &password_clone, cx);
+                    }
+                    controller.connect(profile_clone, password_clone, cx);
                 });
                 self.connection_modal = None;
                 cx.notify();
@@ -93,6 +117,69 @@ impl Workspace {
                 cx.notify();
             }
         }
+    }
+
+    fn handle_sidebar_event(
+        &mut self,
+        _sidebar: Entity<SchemaSidebar>,
+        event: &SidebarEvent,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            SidebarEvent::ConnectTo(profile) => {
+                // Get password from keychain
+                let password = self
+                    .controller
+                    .read(cx)
+                    .credential_store()
+                    .retrieve(&profile.keychain_service_key())
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default();
+                let profile_clone = profile.clone();
+                self.controller.update(cx, |c, cx| {
+                    c.connect(profile_clone, password, cx);
+                });
+            }
+            SidebarEvent::PreviewTable { schema, table } => {
+                let schema_clone = schema.clone();
+                let table_clone = table.clone();
+
+                // Show loading state in result area
+                self.result_area.update(cx, |result, cx| {
+                    result.set_loading(cx);
+                });
+
+                self.controller.update(cx, |c, cx| {
+                    c.preview_table(schema_clone, table_clone, cx);
+                });
+            }
+        }
+    }
+
+    fn handle_write_confirm_event(
+        &mut self,
+        _modal: Entity<WriteConfirmModal>,
+        event: &WriteConfirmEvent,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            WriteConfirmEvent::Confirmed(sql) => {
+                let sql_clone = sql.clone();
+
+                // Show loading state in result area
+                self.result_area.update(cx, |result, cx| {
+                    result.set_loading(cx);
+                });
+
+                self.controller.update(cx, |c, cx| {
+                    c.force_execute_query(sql_clone, cx);
+                });
+            }
+            WriteConfirmEvent::Cancelled => {}
+        }
+        self.write_confirm_modal = None;
+        cx.notify();
     }
 
     fn handle_execute_query(
@@ -191,13 +278,40 @@ impl Workspace {
             AppEvent::WritePolicyChanged(_) => {
                 cx.notify();
             }
+            AppEvent::SchemaLoaded(tree) => {
+                self.sidebar.update(cx, |sidebar, cx| {
+                    sidebar.set_schema_tree(tree, cx);
+                });
+            }
+            AppEvent::SavedConnectionsLoaded(connections) => {
+                self.sidebar.update(cx, |sidebar, cx| {
+                    sidebar.set_saved_connections(connections.clone(), cx);
+                });
+            }
+            AppEvent::WriteConfirmationNeeded {
+                sql,
+                classification,
+            } => {
+                let modal = cx.new(|cx| {
+                    WriteConfirmModal::new(sql.clone(), classification.label().to_string(), cx)
+                });
+                cx.subscribe(&modal, Self::handle_write_confirm_event)
+                    .detach();
+                self.write_confirm_modal = Some(modal);
+                cx.notify();
+            }
+            AppEvent::HistoryLoaded(_) => {
+                // TODO: update history panel when we build it
+                cx.notify();
+            }
         }
     }
 }
 
 impl Render for Workspace {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let has_modal = self.connection_modal.is_some();
+        let has_connection_modal = self.connection_modal.is_some();
+        let has_write_confirm_modal = self.write_confirm_modal.is_some();
 
         div()
             .id("workspace")
@@ -263,9 +377,24 @@ impl Render for Workspace {
             )
             // Status bar
             .child(self.status_bar.clone())
-            // Modal overlay (if active)
-            .when(has_modal, |this| {
+            // Connection modal overlay (if active)
+            .when(has_connection_modal, |this| {
                 if let Some(modal) = &self.connection_modal {
+                    this.child(
+                        div()
+                            .absolute()
+                            .top_0()
+                            .left_0()
+                            .size_full()
+                            .child(modal.clone()),
+                    )
+                } else {
+                    this
+                }
+            })
+            // Write confirmation modal overlay (if active)
+            .when(has_write_confirm_modal, |this| {
+                if let Some(modal) = &self.write_confirm_modal {
                     this.child(
                         div()
                             .absolute()

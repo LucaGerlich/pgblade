@@ -6,6 +6,6 @@ mod toolbar;
 
 pub use editor_area::EditorArea;
 pub use result_area::ResultArea;
-pub use sidebar::SchemaSidebar;
+pub use sidebar::{SchemaSidebar, SidebarEvent};
 pub use status_bar::StatusBar;
 pub use toolbar::Toolbar;

@@ -11,13 +11,20 @@ actions!(
         ToggleSidebar,
         FocusEditor,
         FocusResults,
+        SaveConnection,
     ]
 );
 
 // Query commands
 actions!(
     pgblade_query,
-    [ExecuteQuery, ExecuteSelection, CancelQuery,]
+    [
+        ExecuteQuery,
+        ExecuteSelection,
+        CancelQuery,
+        PreviewTable,
+        ShowHistory,
+    ]
 );
 
 // Safety commands
