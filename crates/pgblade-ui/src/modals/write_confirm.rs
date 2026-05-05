@@ -39,6 +39,8 @@ impl Render for WriteConfirmModal {
             .items_center()
             .justify_center()
             .bg(rgba(0x000000aa))
+            .on_mouse_down(MouseButton::Left, |_, _, _| {})
+            .on_mouse_down(MouseButton::Right, |_, _, _| {})
             .child(
                 div()
                     .id("write-confirm-modal")

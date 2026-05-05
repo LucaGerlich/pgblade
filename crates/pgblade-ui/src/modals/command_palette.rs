@@ -154,6 +154,7 @@ impl Render for CommandPalette {
             .items_center()
             .pt(px(80.0))
             .bg(rgba(0x00000088))
+            .on_mouse_down(MouseButton::Left, |_, _, _| {})
             .on_click(cx.listener(|_this, _, _window, cx| {
                 cx.emit(CommandPaletteEvent::Dismissed);
             }))

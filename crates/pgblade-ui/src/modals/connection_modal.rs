@@ -164,7 +164,7 @@ impl ConnectionModal {
 
 impl Render for ConnectionModal {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // Full-screen backdrop
+        // Full-screen backdrop — captures all mouse events to prevent click-through
         div()
             .id("connection-modal-backdrop")
             .size_full()
@@ -172,6 +172,10 @@ impl Render for ConnectionModal {
             .items_center()
             .justify_center()
             .bg(rgba(0x000000aa))
+            .on_mouse_down(MouseButton::Left, |_, _, _| {
+                // Consume click so it doesn't reach the editor behind
+            })
+            .on_mouse_down(MouseButton::Right, |_, _, _| {})
             // Modal card
             .child(
                 div()
