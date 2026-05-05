@@ -27,6 +27,8 @@ pub struct SqlEditor {
     history: UndoHistory,
     focus_handle: FocusHandle,
     scroll_offset: usize, // first visible line (0-based)
+    dragging: bool,       // mouse is being dragged for selection
+    gutter_width: f32,    // computed gutter width in pixels
 }
 
 impl SqlEditor {
@@ -37,6 +39,8 @@ impl SqlEditor {
             history: UndoHistory::new(),
             focus_handle: cx.focus_handle(),
             scroll_offset: 0,
+            dragging: false,
+            gutter_width: GUTTER_BASE_WIDTH,
         }
     }
 
@@ -346,6 +350,75 @@ impl SqlEditor {
         }
     }
 
+    // --- Mouse handling ---
+
+    /// Convert a pixel position (relative to the editor element) to a text Position.
+    fn pixel_to_position(&self, point: Point<Pixels>) -> Position {
+        let y: f32 = point.y.into();
+        let x: f32 = point.x.into();
+
+        let line = ((y / LINE_HEIGHT) as usize + self.scroll_offset)
+            .min(self.buffer.line_count().saturating_sub(1));
+
+        // Approximate column from x position (subtract gutter + padding)
+        let text_x = (x - self.gutter_width - 8.0).max(0.0);
+        let char_width = 8.4_f32;
+        let col = (text_x / char_width).round() as usize;
+        let col = col.min(self.buffer.line_len(line));
+
+        Position::new(line, col)
+    }
+
+    fn handle_mouse_down(
+        &mut self,
+        event: &MouseDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.focus_handle.focus(window);
+        let pos = self.pixel_to_position(event.position);
+
+        if event.click_count == 2 {
+            // Double-click: select word
+            let offset = self.buffer.pos_to_char(pos);
+            let word_start = self.buffer.word_start(offset);
+            let word_end = self.buffer.word_end(offset);
+            // If word_start == word_end (e.g., on whitespace), select at least one char
+            let start_pos = self.buffer.char_to_pos(word_start);
+            let end_pos = self.buffer.char_to_pos(word_end);
+            self.selection = Selection::range(start_pos, end_pos);
+        } else {
+            // Single click: place cursor
+            self.selection.collapse_to(pos);
+            self.dragging = true;
+        }
+        cx.notify();
+    }
+
+    fn handle_mouse_move(
+        &mut self,
+        event: &MouseMoveEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.dragging && event.pressed_button == Some(MouseButton::Left) {
+            let pos = self.pixel_to_position(event.position);
+            self.selection.set_head(pos);
+            self.ensure_cursor_visible();
+            cx.notify();
+        }
+    }
+
+    fn handle_mouse_up(
+        &mut self,
+        _event: &MouseUpEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.dragging = false;
+        cx.notify();
+    }
+
     // --- Key handling ---
 
     fn handle_key_down(
@@ -646,10 +719,23 @@ impl Render for SqlEditor {
         let display_lines =
             compute_display_lines(&self.buffer, self.scroll_offset, visible_line_count);
 
+        // Update gutter width based on line count
+        let line_count = self.buffer.line_count();
+        self.gutter_width = if line_count >= 1000 {
+            56.0
+        } else if line_count >= 100 {
+            48.0
+        } else {
+            GUTTER_BASE_WIDTH
+        };
+
         div()
             .id("sql-editor")
             .track_focus(&self.focus_handle)
             .on_key_down(cx.listener(Self::handle_key_down))
+            .on_mouse_down(MouseButton::Left, cx.listener(Self::handle_mouse_down))
+            .on_mouse_move(cx.listener(Self::handle_mouse_move))
+            .on_mouse_up(MouseButton::Left, cx.listener(Self::handle_mouse_up))
             .size_full()
             .flex()
             .flex_row()
@@ -657,6 +743,7 @@ impl Render for SqlEditor {
             .text_color(rgb(0xd4d4d4))
             .font_family("Monaco")
             .text_sm()
+            .cursor_text()
             .overflow_hidden()
             .child(self.render_gutter(&display_lines))
             .child(self.render_text_area(&display_lines))
