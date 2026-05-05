@@ -1,8 +1,9 @@
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 
-use crate::actions::{ExecuteQuery, NewConnection, ToggleSidebar};
+use crate::actions::{ExecuteQuery, NewConnection, ToggleCommandPalette, ToggleSidebar};
 use crate::controller::AppController;
+use crate::modals::command_palette::{CommandPalette, CommandPaletteEvent};
 use crate::modals::connection_modal::{ConnectionModal, ConnectionModalEvent};
 use crate::modals::write_confirm::{WriteConfirmEvent, WriteConfirmModal};
 use crate::panes::{EditorArea, ResultArea, SchemaSidebar, SidebarEvent, StatusBar, Toolbar};
@@ -21,6 +22,7 @@ pub struct Workspace {
     status_bar: Entity<StatusBar>,
     connection_modal: Option<Entity<ConnectionModal>>,
     write_confirm_modal: Option<Entity<WriteConfirmModal>>,
+    command_palette: Option<Entity<CommandPalette>>,
     sidebar_visible: bool,
 }
 
@@ -59,6 +61,7 @@ impl Workspace {
             status_bar,
             connection_modal,
             write_confirm_modal: None,
+            command_palette: None,
             sidebar_visible: true,
         }
     }
@@ -85,6 +88,62 @@ impl Workspace {
             self.connection_modal = Some(modal);
             cx.notify();
         }
+    }
+
+    fn handle_toggle_command_palette(
+        &mut self,
+        _action: &ToggleCommandPalette,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.command_palette.is_some() {
+            self.command_palette = None;
+        } else {
+            let palette = cx.new(CommandPalette::new);
+            cx.subscribe(&palette, Self::handle_command_palette_event)
+                .detach();
+            palette.read(cx).focus(window);
+            self.command_palette = Some(palette);
+        }
+        cx.notify();
+    }
+
+    fn handle_command_palette_event(
+        &mut self,
+        _palette: Entity<CommandPalette>,
+        event: &CommandPaletteEvent,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            CommandPaletteEvent::Selected(id) => match id.as_str() {
+                "execute_query" => {
+                    let sql = self.editor_area.read(cx).text(cx);
+                    if !sql.trim().is_empty() {
+                        self.result_area.update(cx, |r, cx| r.set_loading(cx));
+                        self.controller.update(cx, |c, cx| c.execute_query(sql, cx));
+                    }
+                }
+                "new_connection" if self.connection_modal.is_none() => {
+                    let modal = cx.new(ConnectionModal::new);
+                    cx.subscribe(&modal, Self::handle_modal_event).detach();
+                    self.connection_modal = Some(modal);
+                }
+                "disconnect" => {
+                    self.controller.update(cx, |c, cx| c.disconnect(cx));
+                }
+                "toggle_sidebar" => {
+                    self.sidebar_visible = !self.sidebar_visible;
+                }
+                "toggle_read_only" => {
+                    self.controller
+                        .update(cx, |c, cx| c.toggle_write_policy(cx));
+                }
+                _ => {}
+            },
+            CommandPaletteEvent::Dismissed => {}
+        }
+        self.command_palette = None;
+        cx.notify();
     }
 
     fn handle_modal_event(
@@ -213,8 +272,14 @@ impl Workspace {
         match event {
             AppEvent::ConnectionStateChanged(state) => {
                 tracing::info!(?state, "connection state changed");
+                let environment = self
+                    .controller
+                    .read(cx)
+                    .active_profile()
+                    .map(|p| p.environment);
                 self.toolbar.update(cx, |toolbar, cx| {
                     toolbar.set_connection_state(state.clone(), cx);
+                    toolbar.set_environment(environment, cx);
                 });
                 let status = match state {
                     ConnectionState::Connected {
@@ -312,6 +377,7 @@ impl Render for Workspace {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let has_connection_modal = self.connection_modal.is_some();
         let has_write_confirm_modal = self.write_confirm_modal.is_some();
+        let has_command_palette = self.command_palette.is_some();
 
         div()
             .id("workspace")
@@ -324,6 +390,7 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::toggle_sidebar))
             .on_action(cx.listener(Self::handle_execute_query))
             .on_action(cx.listener(Self::handle_new_connection))
+            .on_action(cx.listener(Self::handle_toggle_command_palette))
             // Toolbar
             .child(self.toolbar.clone())
             // Main content area
@@ -402,6 +469,21 @@ impl Render for Workspace {
                             .left_0()
                             .size_full()
                             .child(modal.clone()),
+                    )
+                } else {
+                    this
+                }
+            })
+            // Command palette overlay (if active)
+            .when(has_command_palette, |this| {
+                if let Some(palette) = &self.command_palette {
+                    this.child(
+                        div()
+                            .absolute()
+                            .top_0()
+                            .left_0()
+                            .size_full()
+                            .child(palette.clone()),
                     )
                 } else {
                     this

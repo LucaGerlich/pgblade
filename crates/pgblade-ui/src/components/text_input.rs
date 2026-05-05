@@ -286,6 +286,30 @@ impl TextInput {
         }
     }
 
+    /// Render the line numbers gutter for multiline mode.
+    fn render_line_numbers(&self) -> impl IntoElement {
+        let line_count = self.text.matches('\n').count() + 1;
+        let width = if line_count >= 100 { 48.0 } else { 36.0 };
+
+        div()
+            .w(px(width))
+            .flex_shrink_0()
+            .pt_2()
+            .pr_2()
+            .border_r_1()
+            .border_color(rgb(0x333333))
+            .bg(rgb(0x1a1a1a))
+            .flex()
+            .flex_col()
+            .items_end()
+            .children((1..=line_count).map(|n| {
+                div()
+                    .text_xs()
+                    .text_color(rgb(0x555555))
+                    .child(n.to_string())
+            }))
+    }
+
     /// Render the text content with cursor visualization.
     fn render_content(&self, window: &Window) -> impl IntoElement {
         let is_focused = self.focus_handle.is_focused(window);
@@ -343,12 +367,11 @@ impl Render for TextInput {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let is_focused = self.focus_handle.is_focused(window);
 
-        div()
+        let mut container = div()
             .id("text-input")
             .track_focus(&self.focus_handle)
             .on_key_down(cx.listener(Self::handle_key_down))
             .size_full()
-            .p_2()
             .font_family("Monaco")
             .text_sm()
             .text_color(rgb(0xd4d4d4))
@@ -357,14 +380,29 @@ impl Render for TextInput {
             } else {
                 rgb(0x252525)
             })
-            .border_1()
-            .border_color(if is_focused {
-                rgb(0x4fc1ff)
-            } else {
-                rgb(0x3e3e3e)
-            })
-            .rounded_sm()
-            .overflow_hidden()
-            .child(self.render_content(window))
+            .overflow_hidden();
+
+        if self.multiline {
+            // Multiline: flex row with gutter + content
+            container = container
+                .flex()
+                .flex_row()
+                .child(self.render_line_numbers())
+                .child(div().flex_1().p_2().child(self.render_content(window)));
+        } else {
+            // Single-line: border + content
+            container = container
+                .p_2()
+                .border_1()
+                .border_color(if is_focused {
+                    rgb(0x4fc1ff)
+                } else {
+                    rgb(0x3e3e3e)
+                })
+                .rounded_sm()
+                .child(self.render_content(window));
+        }
+
+        container
     }
 }

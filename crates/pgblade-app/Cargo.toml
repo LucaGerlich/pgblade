@@ -4,6 +4,15 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
+description = "A fast, native PostgreSQL workbench"
+repository = "https://github.com/LucaGerlich/pgblade"
+authors = ["Luca Gerlich"]
+
+[package.metadata.bundle]
+name = "PgBlade"
+identifier = "com.lucagerlich.pgblade"
+category = "Developer Tool"
+short_description = "A fast, native PostgreSQL workbench"
 
 [[bin]]
 name = "pgblade"

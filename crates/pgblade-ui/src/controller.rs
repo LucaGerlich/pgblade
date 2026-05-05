@@ -86,6 +86,16 @@ impl AppController {
         self.write_policy
     }
 
+    /// Toggle between ReadOnly and ConfirmWrites modes.
+    pub fn toggle_write_policy(&mut self, cx: &mut Context<Self>) {
+        self.write_policy = match self.write_policy {
+            WritePolicy::ReadOnly => WritePolicy::ConfirmWrites,
+            _ => WritePolicy::ReadOnly,
+        };
+        cx.emit(AppEvent::WritePolicyChanged(self.write_policy));
+        cx.notify();
+    }
+
     pub fn active_query_state(&self) -> Option<&QueryState> {
         self.active_query.as_ref().map(|(_, s)| s)
     }
@@ -113,6 +123,11 @@ impl AppController {
         &self.query_history
     }
 
+    /// Returns the active connection profile, if connected.
+    pub fn active_profile(&self) -> Option<&ConnectionProfile> {
+        self.active_profile.as_ref()
+    }
+
     /// Returns the active database name from the connection state.
     fn active_database(&self) -> Option<String> {
         match &self.connection_state {
@@ -135,19 +150,29 @@ impl AppController {
     }
 
     /// Save a connection profile to SQLite + credential to keychain.
+    ///
+    /// If a connection with the same host, port, database, and username
+    /// already exists, the existing record is updated instead of creating
+    /// a duplicate.
     pub fn save_connection(
         &mut self,
         profile: &ConnectionProfile,
         password: &str,
         cx: &mut Context<Self>,
     ) {
-        if let Err(e) = self.storage.save_connection(profile) {
+        // Check for duplicate — reuse existing ID if found
+        let mut profile_to_save = profile.clone();
+        if let Ok(Some(existing_id)) = self.storage.find_duplicate(profile) {
+            profile_to_save.id = existing_id;
+        }
+
+        if let Err(e) = self.storage.save_connection(&profile_to_save) {
             tracing::error!("failed to save connection: {e}");
             return;
         }
         if let Err(e) = self
             .credential_store
-            .store(&profile.keychain_service_key(), password)
+            .store(&profile_to_save.keychain_service_key(), password)
         {
             tracing::error!("failed to store credential: {e}");
         }

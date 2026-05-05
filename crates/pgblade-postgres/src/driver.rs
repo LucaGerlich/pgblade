@@ -26,10 +26,17 @@ impl PostgresDriver {
     }
 
     /// Build a connection string from a ConnectionProfile.
+    ///
+    /// Values are single-quoted and any embedded single quotes are escaped
+    /// with a backslash to prevent injection.
     fn build_connection_string(profile: &ConnectionProfile, password: &str) -> String {
         format!(
-            "host={} port={} dbname={} user={} password={}",
-            profile.host, profile.port, profile.database, profile.username, password
+            "host='{}' port={} dbname='{}' user='{}' password='{}'",
+            profile.host.replace('\'', "\\'"),
+            profile.port,
+            profile.database.replace('\'', "\\'"),
+            profile.username.replace('\'', "\\'"),
+            password.replace('\'', "\\'"),
         )
     }
 }

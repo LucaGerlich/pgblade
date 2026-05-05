@@ -4,6 +4,40 @@ use gpui::*;
 use pgblade_core::error::QueryError;
 use pgblade_core::result::{CellValue, ColumnMeta};
 
+/// Renders a single data row for the result grid.
+///
+/// Extracted as a free function so it can be used inside the
+/// `uniform_list` closure which cannot capture `&self`.
+fn render_data_row(idx: usize, row: &[CellValue], _columns: &[ColumnMeta]) -> Div {
+    let bg = if idx.is_multiple_of(2) {
+        rgb(0x1a1a1a)
+    } else {
+        rgb(0x1e1e1e)
+    };
+
+    div()
+        .h(px(24.0))
+        .flex()
+        .flex_row()
+        .items_center()
+        .px_2()
+        .bg(bg)
+        .children(row.iter().map(|cell| {
+            let (text, color) = match cell {
+                CellValue::Null => ("NULL".to_string(), rgb(0x555555)),
+                other => (other.display(), rgb(0xcccccc)),
+            };
+
+            div()
+                .w(px(150.0))
+                .px_2()
+                .text_xs()
+                .text_color(color)
+                .overflow_hidden()
+                .child(text)
+        }))
+}
+
 /// The result grid displays query results or error messages.
 pub struct ResultArea {
     state: ResultState,
@@ -132,6 +166,8 @@ impl ResultArea {
         duration_ms: i64,
     ) -> impl IntoElement {
         let row_count = rows.len();
+        let rows_for_list = rows.to_vec();
+        let columns_for_list = columns.to_vec();
 
         div()
             .size_full()
@@ -140,12 +176,22 @@ impl ResultArea {
             .overflow_hidden()
             // Column headers
             .child(self.render_header(columns))
-            // Data rows
+            // Data rows via uniform_list for virtualized scrolling
             .child(
-                div().flex_1().overflow_hidden().children(
-                    rows.iter()
-                        .enumerate()
-                        .map(|(i, row)| self.render_row(i, row, columns)),
+                div().flex_1().child(
+                    uniform_list("result-rows", row_count, {
+                        move |range, _window, _cx| {
+                            rows_for_list[range.clone()]
+                                .iter()
+                                .enumerate()
+                                .map(|(local_idx, row)| {
+                                    let idx = range.start + local_idx;
+                                    render_data_row(idx, row, &columns_for_list)
+                                })
+                                .collect()
+                        }
+                    })
+                    .flex_1(),
                 ),
             )
             // Footer
@@ -190,41 +236,6 @@ impl ResultArea {
                     .text_color(rgb(0xaaaaaa))
                     .overflow_hidden()
                     .child(col.name.clone())
-            }))
-    }
-
-    fn render_row(
-        &self,
-        idx: usize,
-        row: &[CellValue],
-        _columns: &[ColumnMeta],
-    ) -> impl IntoElement {
-        let bg = if idx.is_multiple_of(2) {
-            rgb(0x1a1a1a)
-        } else {
-            rgb(0x1e1e1e)
-        };
-
-        div()
-            .h(px(24.0))
-            .flex()
-            .flex_row()
-            .items_center()
-            .px_2()
-            .bg(bg)
-            .children(row.iter().map(|cell| {
-                let (text, color) = match cell {
-                    CellValue::Null => ("NULL".to_string(), rgb(0x555555)),
-                    other => (other.display(), rgb(0xcccccc)),
-                };
-
-                div()
-                    .w(px(150.0))
-                    .px_2()
-                    .text_xs()
-                    .text_color(color)
-                    .overflow_hidden()
-                    .child(text)
             }))
     }
 }

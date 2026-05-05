@@ -5,6 +5,37 @@ use crate::connection::{ConnectionId, ConnectionProfile, Environment, SslMode};
 use super::{StorageError, StorageManager};
 
 impl StorageManager {
+    /// Check if a connection with the same host, port, database, and username already exists.
+    pub fn find_duplicate(
+        &self,
+        profile: &ConnectionProfile,
+    ) -> Result<Option<ConnectionId>, StorageError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id FROM connections WHERE host = ?1 AND port = ?2 AND database_name = ?3 AND username = ?4",
+        )?;
+
+        let result = stmt.query_row(
+            params![
+                profile.host,
+                profile.port as i64,
+                profile.database,
+                profile.username
+            ],
+            |row| {
+                let id_str: String = row.get(0)?;
+                Ok(ConnectionId(
+                    uuid::Uuid::parse_str(&id_str).unwrap_or_else(|_| uuid::Uuid::new_v4()),
+                ))
+            },
+        );
+
+        match result {
+            Ok(id) => Ok(Some(id)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(StorageError::Database(e)),
+        }
+    }
+
     /// Persists a connection profile, replacing any existing entry with the same ID.
     pub fn save_connection(&self, profile: &ConnectionProfile) -> Result<(), StorageError> {
         let now = chrono::Utc::now().to_rfc3339();
@@ -170,5 +201,36 @@ mod tests {
         assert_eq!(parse_ssl_mode("Disable"), SslMode::Disable);
         assert_eq!(parse_ssl_mode("Require"), SslMode::Require);
         assert_eq!(parse_ssl_mode("unknown"), SslMode::Prefer);
+    }
+
+    #[test]
+    fn find_duplicate_returns_existing_id() {
+        let storage = StorageManager::in_memory().unwrap();
+        let profile = test_profile();
+        storage.save_connection(&profile).unwrap();
+
+        let result = storage.find_duplicate(&profile).unwrap();
+        assert_eq!(result, Some(profile.id));
+    }
+
+    #[test]
+    fn find_duplicate_returns_none_when_no_match() {
+        let storage = StorageManager::in_memory().unwrap();
+        let profile = test_profile();
+
+        let result = storage.find_duplicate(&profile).unwrap();
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn find_duplicate_ignores_different_port() {
+        let storage = StorageManager::in_memory().unwrap();
+        let profile = test_profile();
+        storage.save_connection(&profile).unwrap();
+
+        let mut different = test_profile();
+        different.port = 5433;
+        let result = storage.find_duplicate(&different).unwrap();
+        assert_eq!(result, None);
     }
 }

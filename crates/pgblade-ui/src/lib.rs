@@ -22,6 +22,7 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-enter", actions::ExecuteQuery, Some("Workspace")),
         KeyBinding::new("cmd-n", actions::NewConnection, Some("Workspace")),
         KeyBinding::new("cmd-b", actions::ToggleSidebar, Some("Workspace")),
+        KeyBinding::new("cmd-k", actions::ToggleCommandPalette, Some("Workspace")),
     ]);
 }
 

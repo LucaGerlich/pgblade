@@ -9,6 +9,7 @@ actions!(
         OpenConnection,
         DisconnectConnection,
         ToggleSidebar,
+        ToggleCommandPalette,
         FocusEditor,
         FocusResults,
         SaveConnection,
