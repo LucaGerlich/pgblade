@@ -64,6 +64,45 @@ impl ConnectionModal {
         }
     }
 
+    pub fn from_profile(profile: &ConnectionProfile, cx: &mut Context<Self>) -> Self {
+        let host = cx.new(|cx| {
+            let mut input = TextInput::new(cx, false).with_placeholder("localhost");
+            input.set_text(profile.host.clone(), cx);
+            input
+        });
+        let port = cx.new(|cx| {
+            let mut input = TextInput::new(cx, false).with_placeholder("5432");
+            input.set_text(profile.port.to_string(), cx);
+            input
+        });
+        let database = cx.new(|cx| {
+            let mut input = TextInput::new(cx, false).with_placeholder("postgres");
+            input.set_text(profile.database.clone(), cx);
+            input
+        });
+        let username = cx.new(|cx| {
+            let mut input = TextInput::new(cx, false).with_placeholder("postgres");
+            input.set_text(profile.username.clone(), cx);
+            input
+        });
+        let password = cx.new(|cx| {
+            TextInput::new(cx, false)
+                .with_placeholder("password")
+                .with_masked(true)
+        });
+
+        Self {
+            host,
+            port,
+            database,
+            username,
+            password,
+            environment: profile.environment,
+            save_connection: true,
+            focus_handle: cx.focus_handle(),
+        }
+    }
+
     pub fn focus_first_field(&self, window: &mut Window) {
         self.focus_handle.focus(window);
     }

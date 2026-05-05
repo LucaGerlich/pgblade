@@ -15,6 +15,8 @@ pub struct SchemaSidebar {
 #[derive(Debug, Clone)]
 pub enum SidebarEvent {
     ConnectTo(ConnectionProfile),
+    EditConnection(ConnectionProfile),
+    DeleteConnection(ConnectionId),
     PreviewTable { schema: String, table: String },
 }
 
@@ -34,13 +36,16 @@ impl SchemaSidebar {
                     });
                 }
             } else if let Some(conn_id_str) = id.strip_prefix("connect:") {
-                // User clicked a disconnected connection to connect
-                if let Some(profile) = this
-                    .saved_connections
-                    .iter()
-                    .find(|c| c.id.0.to_string() == conn_id_str)
-                {
-                    cx.emit(SidebarEvent::ConnectTo(profile.clone()));
+                if let Some(profile) = this.find_connection(conn_id_str) {
+                    cx.emit(SidebarEvent::ConnectTo(profile));
+                }
+            } else if let Some(conn_id_str) = id.strip_prefix("edit:") {
+                if let Some(profile) = this.find_connection(conn_id_str) {
+                    cx.emit(SidebarEvent::EditConnection(profile));
+                }
+            } else if let Some(conn_id_str) = id.strip_prefix("delete:") {
+                if let Some(profile) = this.find_connection(conn_id_str) {
+                    cx.emit(SidebarEvent::DeleteConnection(profile.id));
                 }
             }
         })
@@ -78,6 +83,13 @@ impl SchemaSidebar {
         self.active_connection_id = None;
         self.schema_tree = None;
         self.rebuild_tree(cx);
+    }
+
+    fn find_connection(&self, id_str: &str) -> Option<ConnectionProfile> {
+        self.saved_connections
+            .iter()
+            .find(|c| c.id.0.to_string() == id_str)
+            .cloned()
     }
 
     fn rebuild_tree(&self, cx: &mut Context<Self>) {
@@ -128,14 +140,30 @@ impl SchemaSidebar {
                         }]
                     }
                 } else {
-                    // Not connected — single child node to click-to-connect
-                    vec![TreeNode {
-                        id: format!("connect:{}", conn.id.0),
-                        label: "Click to connect".to_string(),
-                        icon: None,
-                        children: Vec::new(),
-                        depth: 1,
-                    }]
+                    // Not connected — actions
+                    vec![
+                        TreeNode {
+                            id: format!("connect:{}", conn.id.0),
+                            label: "Connect".to_string(),
+                            icon: None,
+                            children: Vec::new(),
+                            depth: 1,
+                        },
+                        TreeNode {
+                            id: format!("edit:{}", conn.id.0),
+                            label: "Edit".to_string(),
+                            icon: None,
+                            children: Vec::new(),
+                            depth: 1,
+                        },
+                        TreeNode {
+                            id: format!("delete:{}", conn.id.0),
+                            label: "Delete".to_string(),
+                            icon: None,
+                            children: Vec::new(),
+                            depth: 1,
+                        },
+                    ]
                 };
 
                 let status = if is_active { " (connected)" } else { "" };

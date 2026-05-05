@@ -220,13 +220,26 @@ impl Workspace {
                 let schema_clone = schema.clone();
                 let table_clone = table.clone();
 
-                // Show loading state in result area
-                self.result_area.update(cx, |result, cx| {
-                    result.set_loading(cx);
-                });
+                self.result_area
+                    .update(cx, |result, cx| result.set_loading(cx));
 
                 self.controller.update(cx, |c, cx| {
                     c.preview_table(schema_clone, table_clone, cx);
+                });
+            }
+            SidebarEvent::EditConnection(profile) => {
+                let profile = profile.clone();
+                let modal = cx.new(|cx| ConnectionModal::from_profile(&profile, cx));
+                cx.subscribe(&modal, Self::handle_modal_event).detach();
+                self.connection_modal = Some(modal);
+                self.editor_area
+                    .update(cx, |e, cx| e.set_interactive(false, cx));
+                cx.notify();
+            }
+            SidebarEvent::DeleteConnection(conn_id) => {
+                let conn_id = *conn_id;
+                self.controller.update(cx, |c, cx| {
+                    c.delete_connection(&conn_id, cx);
                 });
             }
         }
