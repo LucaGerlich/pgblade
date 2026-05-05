@@ -1,5 +1,8 @@
 use pgblade_core::error::QueryError;
-use pgblade_core::schema::{ColumnInfo, SchemaInfo, TableInfo, TableKind};
+use pgblade_core::schema::{
+    ColumnInfo, ConstraintInfo, ConstraintKind, ForeignKeyInfo, FunctionInfo, IndexInfo,
+    SchemaInfo, SequenceInfo, TableInfo, TableKind, TriggerInfo,
+};
 
 use crate::error_map::map_query_error;
 
@@ -31,13 +34,12 @@ pub async fn fetch_tables(
 ) -> Result<Vec<TableInfo>, QueryError> {
     let rows = client
         .query(
-            "SELECT t.table_name, t.table_type, \
-                    (SELECT reltuples::bigint FROM pg_class c \
-                     JOIN pg_namespace n ON c.relnamespace = n.oid \
-                     WHERE c.relname = t.table_name AND n.nspname = t.table_schema) as row_estimate \
-             FROM information_schema.tables t \
-             WHERE t.table_schema = $1 \
-             ORDER BY t.table_type, t.table_name",
+            "SELECT c.relname, c.relkind::text, c.reltuples::bigint \
+             FROM pg_class c \
+             JOIN pg_namespace n ON n.oid = c.relnamespace \
+             WHERE n.nspname = $1 \
+                 AND c.relkind IN ('r', 'v', 'm', 'p') \
+             ORDER BY c.relkind, c.relname",
             &[&schema],
         )
         .await
@@ -46,9 +48,10 @@ pub async fn fetch_tables(
     Ok(rows
         .iter()
         .map(|row| {
-            let table_type: String = row.get(1);
-            let kind = match table_type.as_str() {
-                "VIEW" => TableKind::View,
+            let relkind: String = row.get(1);
+            let kind = match relkind.as_str() {
+                "v" => TableKind::View,
+                "m" => TableKind::MaterializedView,
                 _ => TableKind::Table,
             };
             TableInfo {
@@ -100,6 +103,204 @@ pub async fn fetch_columns(
                 default_value: row.get(3),
                 ordinal_position: row.get(4),
             }
+        })
+        .collect())
+}
+
+pub async fn fetch_constraints(
+    client: &tokio_postgres::Client,
+    schema: &str,
+    table: &str,
+) -> Result<Vec<ConstraintInfo>, QueryError> {
+    let rows = client
+        .query(
+            "SELECT con.conname, con.contype::text, \
+                    array_agg(att.attname ORDER BY u.ord)::text[] \
+             FROM pg_constraint con \
+             JOIN pg_class rel ON rel.oid = con.conrelid \
+             JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace \
+             CROSS JOIN LATERAL unnest(con.conkey) WITH ORDINALITY AS u(attnum, ord) \
+             JOIN pg_attribute att ON att.attrelid = rel.oid AND att.attnum = u.attnum \
+             WHERE nsp.nspname = $1 AND rel.relname = $2 \
+             GROUP BY con.conname, con.contype \
+             ORDER BY con.conname",
+            &[&schema, &table],
+        )
+        .await
+        .map_err(map_query_error)?;
+
+    Ok(rows
+        .iter()
+        .map(|row| {
+            let contype: String = row.get(1);
+            let kind = match contype.as_str() {
+                "p" => ConstraintKind::PrimaryKey,
+                "f" => ConstraintKind::ForeignKey,
+                "u" => ConstraintKind::Unique,
+                "c" => ConstraintKind::Check,
+                "x" => ConstraintKind::Exclusion,
+                _ => ConstraintKind::Check,
+            };
+            let columns: Vec<String> = row.get(2);
+            ConstraintInfo {
+                name: row.get(0),
+                kind,
+                columns,
+            }
+        })
+        .collect())
+}
+
+pub async fn fetch_foreign_keys(
+    client: &tokio_postgres::Client,
+    schema: &str,
+    table: &str,
+) -> Result<Vec<ForeignKeyInfo>, QueryError> {
+    let rows = client
+        .query(
+            "SELECT tc.constraint_name, \
+                    array_agg(kcu.column_name ORDER BY kcu.ordinal_position)::text[] as columns, \
+                    ccu.table_name AS referenced_table, \
+                    array_agg(ccu.column_name ORDER BY kcu.ordinal_position)::text[] as referenced_columns \
+             FROM information_schema.table_constraints tc \
+             JOIN information_schema.key_column_usage kcu \
+                 ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema \
+             JOIN information_schema.constraint_column_usage ccu \
+                 ON tc.constraint_name = ccu.constraint_name AND tc.table_schema = ccu.table_schema \
+             WHERE tc.constraint_type = 'FOREIGN KEY' \
+                 AND tc.table_schema = $1 AND tc.table_name = $2 \
+             GROUP BY tc.constraint_name, ccu.table_name \
+             ORDER BY tc.constraint_name",
+            &[&schema, &table],
+        )
+        .await
+        .map_err(map_query_error)?;
+
+    Ok(rows
+        .iter()
+        .map(|row| ForeignKeyInfo {
+            name: row.get(0),
+            columns: row.get(1),
+            referenced_table: row.get(2),
+            referenced_columns: row.get(3),
+        })
+        .collect())
+}
+
+pub async fn fetch_indexes(
+    client: &tokio_postgres::Client,
+    schema: &str,
+    table: &str,
+) -> Result<Vec<IndexInfo>, QueryError> {
+    let rows = client
+        .query(
+            "SELECT i.relname, ix.indisunique, am.amname, \
+                    array_agg(a.attname ORDER BY array_position(ix.indkey, a.attnum))::text[] \
+             FROM pg_index ix \
+             JOIN pg_class t ON t.oid = ix.indrelid \
+             JOIN pg_class i ON i.oid = ix.indexrelid \
+             JOIN pg_namespace n ON n.oid = t.relnamespace \
+             JOIN pg_am am ON am.oid = i.relam \
+             JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(ix.indkey) \
+             WHERE n.nspname = $1 AND t.relname = $2 \
+             GROUP BY i.relname, ix.indisunique, am.amname \
+             ORDER BY i.relname",
+            &[&schema, &table],
+        )
+        .await
+        .map_err(map_query_error)?;
+
+    Ok(rows
+        .iter()
+        .map(|row| IndexInfo {
+            name: row.get(0),
+            is_unique: row.get(1),
+            index_type: row.get(2),
+            columns: row.get(3),
+        })
+        .collect())
+}
+
+pub async fn fetch_triggers(
+    client: &tokio_postgres::Client,
+    schema: &str,
+    table: &str,
+) -> Result<Vec<TriggerInfo>, QueryError> {
+    let rows = client
+        .query(
+            "SELECT trigger_name, action_timing, event_manipulation \
+             FROM information_schema.triggers \
+             WHERE trigger_schema = $1 AND event_object_table = $2 \
+             ORDER BY trigger_name",
+            &[&schema, &table],
+        )
+        .await
+        .map_err(map_query_error)?;
+
+    Ok(rows
+        .iter()
+        .map(|row| TriggerInfo {
+            name: row.get(0),
+            timing: row.get(1),
+            event: row.get(2),
+        })
+        .collect())
+}
+
+pub async fn fetch_functions(
+    client: &tokio_postgres::Client,
+    schema: &str,
+) -> Result<Vec<FunctionInfo>, QueryError> {
+    let rows = client
+        .query(
+            "SELECT p.proname, n.nspname, \
+                    pg_get_function_arguments(p.oid) as args, \
+                    pg_get_function_result(p.oid) as return_type, \
+                    l.lanname \
+             FROM pg_proc p \
+             JOIN pg_namespace n ON n.oid = p.pronamespace \
+             JOIN pg_language l ON l.oid = p.prolang \
+             WHERE n.nspname = $1 \
+                 AND p.prokind IN ('f', 'p') \
+             ORDER BY p.proname",
+            &[&schema],
+        )
+        .await
+        .map_err(map_query_error)?;
+
+    Ok(rows
+        .iter()
+        .map(|row| FunctionInfo {
+            name: row.get(0),
+            schema: row.get(1),
+            arguments: row.get(2),
+            return_type: row.get(3),
+            language: row.get(4),
+        })
+        .collect())
+}
+
+pub async fn fetch_sequences(
+    client: &tokio_postgres::Client,
+    schema: &str,
+) -> Result<Vec<SequenceInfo>, QueryError> {
+    let rows = client
+        .query(
+            "SELECT sequencename, data_type \
+             FROM pg_sequences \
+             WHERE schemaname = $1 \
+             ORDER BY sequencename",
+            &[&schema],
+        )
+        .await
+        .map_err(map_query_error)?;
+
+    Ok(rows
+        .iter()
+        .map(|row| SequenceInfo {
+            name: row.get(0),
+            schema: schema.to_string(),
+            data_type: row.get(1),
         })
         .collect())
 }

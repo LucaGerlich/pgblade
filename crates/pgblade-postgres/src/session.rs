@@ -125,4 +125,50 @@ impl DatabaseSession for PostgresSession {
     ) -> Result<Vec<pgblade_core::schema::ColumnInfo>, QueryError> {
         crate::introspection::fetch_columns(&self.client, schema, table).await
     }
+
+    async fn list_constraints(
+        &self,
+        schema: &str,
+        table: &str,
+    ) -> Result<Vec<pgblade_core::schema::ConstraintInfo>, QueryError> {
+        crate::introspection::fetch_constraints(&self.client, schema, table).await
+    }
+
+    async fn list_foreign_keys(
+        &self,
+        schema: &str,
+        table: &str,
+    ) -> Result<Vec<pgblade_core::schema::ForeignKeyInfo>, QueryError> {
+        crate::introspection::fetch_foreign_keys(&self.client, schema, table).await
+    }
+
+    async fn list_indexes(
+        &self,
+        schema: &str,
+        table: &str,
+    ) -> Result<Vec<pgblade_core::schema::IndexInfo>, QueryError> {
+        crate::introspection::fetch_indexes(&self.client, schema, table).await
+    }
+
+    async fn list_triggers(
+        &self,
+        schema: &str,
+        table: &str,
+    ) -> Result<Vec<pgblade_core::schema::TriggerInfo>, QueryError> {
+        crate::introspection::fetch_triggers(&self.client, schema, table).await
+    }
+
+    async fn list_functions(
+        &self,
+        schema: &str,
+    ) -> Result<Vec<pgblade_core::schema::FunctionInfo>, QueryError> {
+        crate::introspection::fetch_functions(&self.client, schema).await
+    }
+
+    async fn list_sequences(
+        &self,
+        schema: &str,
+    ) -> Result<Vec<pgblade_core::schema::SequenceInfo>, QueryError> {
+        crate::introspection::fetch_sequences(&self.client, schema).await
+    }
 }

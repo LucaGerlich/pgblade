@@ -3,7 +3,10 @@ use async_trait::async_trait;
 use crate::connection::ConnectionProfile;
 use crate::error::{ConnectionError, QueryError};
 use crate::result::ResultSet;
-use crate::schema::{ColumnInfo, SchemaInfo, TableInfo};
+use crate::schema::{
+    ColumnInfo, ConstraintInfo, ForeignKeyInfo, FunctionInfo, IndexInfo, SchemaInfo, SequenceInfo,
+    TableInfo, TriggerInfo,
+};
 
 /// Trait boundary for database drivers.
 ///
@@ -44,4 +47,34 @@ pub trait DatabaseSession: Send + Sync {
 
     /// List columns for a table.
     async fn list_columns(&self, schema: &str, table: &str) -> Result<Vec<ColumnInfo>, QueryError>;
+
+    /// List constraints for a table.
+    async fn list_constraints(
+        &self,
+        schema: &str,
+        table: &str,
+    ) -> Result<Vec<ConstraintInfo>, QueryError>;
+
+    /// List foreign keys for a table.
+    async fn list_foreign_keys(
+        &self,
+        schema: &str,
+        table: &str,
+    ) -> Result<Vec<ForeignKeyInfo>, QueryError>;
+
+    /// List indexes for a table.
+    async fn list_indexes(&self, schema: &str, table: &str) -> Result<Vec<IndexInfo>, QueryError>;
+
+    /// List triggers for a table.
+    async fn list_triggers(
+        &self,
+        schema: &str,
+        table: &str,
+    ) -> Result<Vec<TriggerInfo>, QueryError>;
+
+    /// List functions and procedures in a schema.
+    async fn list_functions(&self, schema: &str) -> Result<Vec<FunctionInfo>, QueryError>;
+
+    /// List sequences in a schema.
+    async fn list_sequences(&self, schema: &str) -> Result<Vec<SequenceInfo>, QueryError>;
 }

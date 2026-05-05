@@ -211,23 +211,64 @@ impl AppController {
         cx.spawn(async move |this, cx| {
             let schemas_result = runtime
                 .spawn(async move {
+                    use pgblade_core::schema::{SchemaEntry, TableEntry, TableKind};
+
                     let schemas = session.list_schemas().await?;
                     let mut entries = Vec::new();
+
                     for schema in &schemas {
-                        let tables = session.list_tables(&schema.name).await?;
-                        let mut table_entries = Vec::new();
-                        for table in &tables {
-                            let columns = session.list_columns(&schema.name, &table.name).await?;
-                            table_entries.push(pgblade_core::schema::TableEntry {
-                                info: table.clone(),
+                        let all_tables = session.list_tables(&schema.name).await?;
+
+                        let mut tables = Vec::new();
+                        let mut views = Vec::new();
+                        let mut materialized_views = Vec::new();
+
+                        for table_info in &all_tables {
+                            let columns =
+                                session.list_columns(&schema.name, &table_info.name).await?;
+                            let constraints = session
+                                .list_constraints(&schema.name, &table_info.name)
+                                .await?;
+                            let foreign_keys = session
+                                .list_foreign_keys(&schema.name, &table_info.name)
+                                .await?;
+                            let indexes =
+                                session.list_indexes(&schema.name, &table_info.name).await?;
+                            let triggers = session
+                                .list_triggers(&schema.name, &table_info.name)
+                                .await?;
+
+                            let entry = TableEntry {
+                                info: table_info.clone(),
                                 columns,
-                            });
+                                constraints,
+                                foreign_keys,
+                                indexes,
+                                triggers,
+                            };
+
+                            match table_info.kind {
+                                TableKind::Table => tables.push(entry),
+                                TableKind::View => views.push(entry),
+                                TableKind::MaterializedView => {
+                                    materialized_views.push(entry);
+                                }
+                            }
                         }
-                        entries.push(pgblade_core::schema::SchemaEntry {
+
+                        let functions = session.list_functions(&schema.name).await?;
+                        let sequences = session.list_sequences(&schema.name).await?;
+
+                        entries.push(SchemaEntry {
                             info: schema.clone(),
-                            tables: table_entries,
+                            tables,
+                            views,
+                            materialized_views,
+                            functions,
+                            sequences,
                         });
                     }
+
                     Ok::<_, QueryError>(SchemaTree { schemas: entries })
                 })
                 .await;
