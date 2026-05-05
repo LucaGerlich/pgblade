@@ -397,9 +397,12 @@ impl Workspace {
                 cx.notify();
             }
             AppEvent::SchemaLoaded(tree) => {
-                self.sidebar.update(cx, |sidebar, cx| {
-                    sidebar.set_schema_tree(tree, cx);
-                });
+                let conn_id = self.controller.read(cx).active_profile().map(|p| p.id);
+                if let Some(conn_id) = conn_id {
+                    self.sidebar.update(cx, |sidebar, cx| {
+                        sidebar.set_schema_tree(conn_id, tree, cx);
+                    });
+                }
             }
             AppEvent::SavedConnectionsLoaded(connections) => {
                 self.sidebar.update(cx, |sidebar, cx| {
