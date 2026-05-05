@@ -174,17 +174,11 @@ impl Render for ConnectionModal {
             .bg(rgba(0x000000aa))
             .on_mouse_down(MouseButton::Left, |_, _, _| {})
             .on_mouse_down(MouseButton::Right, |_, _, _| {})
-            .on_click(cx.listener(|_this, _, _window, cx| {
-                cx.emit(ConnectionModalEvent::Dismiss);
-            }))
             // Modal card
             .child(
                 div()
                     .id("connection-modal")
                     .track_focus(&self.focus_handle)
-                    .on_click(|_, _, _| {
-                        // Stop click from reaching backdrop dismiss handler
-                    })
                     .on_key_down(cx.listener(|_this, event: &KeyDownEvent, _window, cx| {
                         if event.keystroke.key.as_str() == "escape" {
                             cx.emit(ConnectionModalEvent::Dismiss);
