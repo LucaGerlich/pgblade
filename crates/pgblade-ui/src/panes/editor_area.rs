@@ -69,8 +69,17 @@ impl EditorArea {
     }
 
     #[allow(dead_code)]
+    #[allow(dead_code)]
     pub fn focus(&self, window: &mut Window, cx: &App) {
         self.tabs[self.active_tab].editor.read(cx).focus(window);
+    }
+
+    pub fn set_interactive(&mut self, interactive: bool, cx: &mut Context<Self>) {
+        for tab in &self.tabs {
+            tab.editor.update(cx, |editor, cx| {
+                editor.set_interactive(interactive, cx);
+            });
+        }
     }
 
     pub fn new_tab(&mut self, cx: &mut Context<Self>) {

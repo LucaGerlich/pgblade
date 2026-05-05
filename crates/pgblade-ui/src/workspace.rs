@@ -90,6 +90,8 @@ impl Workspace {
             cx.subscribe(&modal, Self::handle_modal_event).detach();
             modal.read(cx).focus_first_field(window);
             self.connection_modal = Some(modal);
+            self.editor_area
+                .update(cx, |e, cx| e.set_interactive(false, cx));
             cx.notify();
         }
     }
@@ -102,12 +104,16 @@ impl Workspace {
     ) {
         if self.command_palette.is_some() {
             self.command_palette = None;
+            self.editor_area
+                .update(cx, |e, cx| e.set_interactive(true, cx));
         } else {
             let palette = cx.new(CommandPalette::new);
             cx.subscribe(&palette, Self::handle_command_palette_event)
                 .detach();
             palette.read(cx).focus(window);
             self.command_palette = Some(palette);
+            self.editor_area
+                .update(cx, |e, cx| e.set_interactive(false, cx));
         }
         cx.notify();
     }
@@ -147,6 +153,8 @@ impl Workspace {
             CommandPaletteEvent::Dismissed => {}
         }
         self.command_palette = None;
+        self.editor_area
+            .update(cx, |e, cx| e.set_interactive(true, cx));
         cx.notify();
     }
 
@@ -173,10 +181,14 @@ impl Workspace {
                     controller.connect(profile_clone, password_clone, cx);
                 });
                 self.connection_modal = None;
+                self.editor_area
+                    .update(cx, |e, cx| e.set_interactive(true, cx));
                 cx.notify();
             }
             ConnectionModalEvent::Dismiss => {
                 self.connection_modal = None;
+                self.editor_area
+                    .update(cx, |e, cx| e.set_interactive(true, cx));
                 cx.notify();
             }
         }
@@ -262,6 +274,8 @@ impl Workspace {
             WriteConfirmEvent::Cancelled => {}
         }
         self.write_confirm_modal = None;
+        self.editor_area
+            .update(cx, |e, cx| e.set_interactive(true, cx));
         cx.notify();
     }
 

@@ -26,9 +26,10 @@ pub struct SqlEditor {
     selection: Selection,
     history: UndoHistory,
     focus_handle: FocusHandle,
-    scroll_offset: usize, // first visible line (0-based)
-    dragging: bool,       // mouse is being dragged for selection
-    gutter_width: f32,    // computed gutter width in pixels
+    scroll_offset: usize,
+    dragging: bool,
+    gutter_width: f32,
+    interactive: bool,
 }
 
 impl SqlEditor {
@@ -41,6 +42,7 @@ impl SqlEditor {
             scroll_offset: 0,
             dragging: false,
             gutter_width: GUTTER_BASE_WIDTH,
+            interactive: true,
         }
     }
 
@@ -61,6 +63,11 @@ impl SqlEditor {
 
     pub fn is_focused(&self, window: &Window) -> bool {
         self.focus_handle.is_focused(window)
+    }
+
+    pub fn set_interactive(&mut self, interactive: bool, cx: &mut Context<Self>) {
+        self.interactive = interactive;
+        cx.notify();
     }
 
     // --- Edit operations (with undo) ---
@@ -932,14 +939,8 @@ impl Render for SqlEditor {
             GUTTER_BASE_WIDTH
         };
 
-        div()
+        let mut editor = div()
             .id("sql-editor")
-            .track_focus(&self.focus_handle)
-            .on_key_down(cx.listener(Self::handle_key_down))
-            .on_mouse_down(MouseButton::Left, cx.listener(Self::handle_mouse_down))
-            .on_mouse_move(cx.listener(Self::handle_mouse_move))
-            .on_mouse_up(MouseButton::Left, cx.listener(Self::handle_mouse_up))
-            .on_scroll_wheel(cx.listener(Self::handle_scroll_wheel))
             .size_full()
             .flex()
             .flex_row()
@@ -947,9 +948,21 @@ impl Render for SqlEditor {
             .text_color(rgb(0xd4d4d4))
             .font_family("Monaco")
             .text_sm()
-            .cursor_text()
             .overflow_hidden()
             .child(self.render_gutter(&display_lines))
-            .child(self.render_text_area(&display_lines))
+            .child(self.render_text_area(&display_lines));
+
+        if self.interactive {
+            editor = editor
+                .track_focus(&self.focus_handle)
+                .on_key_down(cx.listener(Self::handle_key_down))
+                .on_mouse_down(MouseButton::Left, cx.listener(Self::handle_mouse_down))
+                .on_mouse_move(cx.listener(Self::handle_mouse_move))
+                .on_mouse_up(MouseButton::Left, cx.listener(Self::handle_mouse_up))
+                .on_scroll_wheel(cx.listener(Self::handle_scroll_wheel))
+                .cursor_text();
+        }
+
+        editor
     }
 }
