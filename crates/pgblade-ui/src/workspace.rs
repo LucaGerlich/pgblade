@@ -54,11 +54,7 @@ impl Workspace {
             c.load_history(cx);
         });
 
-        // Show connection modal on startup
-        let modal = cx.new(ConnectionModal::new);
-        cx.subscribe(&modal, Self::handle_modal_event).detach();
-        let connection_modal = Some(modal);
-
+        // No connection modal on startup — user connects via sidebar or Cmd+N
         Self {
             controller,
             sidebar,
@@ -66,7 +62,7 @@ impl Workspace {
             result_area,
             toolbar,
             status_bar,
-            connection_modal,
+            connection_modal: None,
             write_confirm_modal: None,
             command_palette: None,
             sidebar_visible: true,
@@ -86,12 +82,13 @@ impl Workspace {
     fn handle_new_connection(
         &mut self,
         _action: &NewConnection,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if self.connection_modal.is_none() {
             let modal = cx.new(ConnectionModal::new);
             cx.subscribe(&modal, Self::handle_modal_event).detach();
+            modal.read(cx).focus_first_field(window);
             self.connection_modal = Some(modal);
             cx.notify();
         }

@@ -64,8 +64,8 @@ impl ConnectionModal {
         }
     }
 
-    pub fn focus(&self, window: &mut Window, cx: &App) {
-        self.host.read(cx).focus(window);
+    pub fn focus_first_field(&self, window: &mut Window) {
+        self.focus_handle.focus(window);
     }
 
     fn submit(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
@@ -177,8 +177,10 @@ impl Render for ConnectionModal {
                 div()
                     .id("connection-modal")
                     .track_focus(&self.focus_handle)
-                    .on_action(cx.listener(|_this, _: &crate::actions::Quit, _window, cx| {
-                        cx.emit(ConnectionModalEvent::Dismiss);
+                    .on_key_down(cx.listener(|_this, event: &KeyDownEvent, _window, cx| {
+                        if event.keystroke.key.as_str() == "escape" {
+                            cx.emit(ConnectionModalEvent::Dismiss);
+                        }
                     }))
                     .w(px(400.0))
                     .p_6()
