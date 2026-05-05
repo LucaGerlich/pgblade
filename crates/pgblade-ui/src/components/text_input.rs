@@ -1,0 +1,370 @@
+use gpui::*;
+
+/// A reusable text input component with cursor movement and basic editing.
+///
+/// Uses GPUI's focus and keyboard system for text input.
+/// Supports both single-line (form fields) and multi-line (SQL editor) modes.
+pub struct TextInput {
+    text: String,
+    cursor: usize,
+    focus_handle: FocusHandle,
+    multiline: bool,
+    placeholder: SharedString,
+    masked: bool,
+}
+
+impl TextInput {
+    pub fn new(cx: &mut Context<Self>, multiline: bool) -> Self {
+        Self {
+            text: String::new(),
+            cursor: 0,
+            focus_handle: cx.focus_handle(),
+            multiline,
+            placeholder: "".into(),
+            masked: false,
+        }
+    }
+
+    pub fn with_placeholder(mut self, placeholder: impl Into<SharedString>) -> Self {
+        self.placeholder = placeholder.into();
+        self
+    }
+
+    pub fn with_masked(mut self, masked: bool) -> Self {
+        self.masked = masked;
+        self
+    }
+
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+
+    pub fn set_text(&mut self, text: String, cx: &mut Context<Self>) {
+        self.text = text;
+        self.cursor = self.text.len();
+        cx.notify();
+    }
+
+    pub fn focus_handle(&self) -> &FocusHandle {
+        &self.focus_handle
+    }
+
+    pub fn focus(&self, window: &mut Window) {
+        self.focus_handle.focus(window);
+    }
+
+    pub fn is_focused(&self, window: &Window) -> bool {
+        self.focus_handle.is_focused(window)
+    }
+
+    fn insert_char(&mut self, ch: &str, cx: &mut Context<Self>) {
+        self.text.insert_str(self.cursor, ch);
+        self.cursor += ch.len();
+        cx.emit(TextInputEvent::Changed(self.text.clone()));
+        cx.notify();
+    }
+
+    fn backspace(&mut self, cx: &mut Context<Self>) {
+        if self.cursor > 0 {
+            // Find the previous character boundary
+            let prev = self.text[..self.cursor]
+                .char_indices()
+                .next_back()
+                .map(|(i, _)| i)
+                .unwrap_or(0);
+            self.text.drain(prev..self.cursor);
+            self.cursor = prev;
+            cx.emit(TextInputEvent::Changed(self.text.clone()));
+            cx.notify();
+        }
+    }
+
+    fn delete_forward(&mut self, cx: &mut Context<Self>) {
+        if self.cursor < self.text.len() {
+            let next = self.text[self.cursor..]
+                .char_indices()
+                .nth(1)
+                .map(|(i, _)| self.cursor + i)
+                .unwrap_or(self.text.len());
+            self.text.drain(self.cursor..next);
+            cx.emit(TextInputEvent::Changed(self.text.clone()));
+            cx.notify();
+        }
+    }
+
+    fn move_left(&mut self, cx: &mut Context<Self>) {
+        if self.cursor > 0 {
+            self.cursor = self.text[..self.cursor]
+                .char_indices()
+                .next_back()
+                .map(|(i, _)| i)
+                .unwrap_or(0);
+            cx.notify();
+        }
+    }
+
+    fn move_right(&mut self, cx: &mut Context<Self>) {
+        if self.cursor < self.text.len() {
+            self.cursor = self.text[self.cursor..]
+                .char_indices()
+                .nth(1)
+                .map(|(i, _)| self.cursor + i)
+                .unwrap_or(self.text.len());
+            cx.notify();
+        }
+    }
+
+    fn move_to_start(&mut self, cx: &mut Context<Self>) {
+        if self.multiline {
+            // Move to start of current line
+            let line_start = self.text[..self.cursor]
+                .rfind('\n')
+                .map(|i| i + 1)
+                .unwrap_or(0);
+            self.cursor = line_start;
+        } else {
+            self.cursor = 0;
+        }
+        cx.notify();
+    }
+
+    fn move_to_end(&mut self, cx: &mut Context<Self>) {
+        if self.multiline {
+            // Move to end of current line
+            let line_end = self.text[self.cursor..]
+                .find('\n')
+                .map(|i| self.cursor + i)
+                .unwrap_or(self.text.len());
+            self.cursor = line_end;
+        } else {
+            self.cursor = self.text.len();
+        }
+        cx.notify();
+    }
+
+    fn move_up(&mut self, cx: &mut Context<Self>) {
+        if !self.multiline {
+            return;
+        }
+        let col = self.current_column();
+        if let Some(prev_line_start) = self.prev_line_start() {
+            let prev_line_len = self.text[prev_line_start..self.cursor]
+                .find('\n')
+                .unwrap_or(self.cursor - prev_line_start);
+            self.cursor = prev_line_start + col.min(prev_line_len);
+            cx.notify();
+        }
+    }
+
+    fn move_down(&mut self, cx: &mut Context<Self>) {
+        if !self.multiline {
+            return;
+        }
+        let col = self.current_column();
+        if let Some(next_line_start) = self.next_line_start() {
+            let next_line_len = self.text[next_line_start..]
+                .find('\n')
+                .unwrap_or(self.text.len() - next_line_start);
+            self.cursor = next_line_start + col.min(next_line_len);
+            cx.notify();
+        }
+    }
+
+    fn current_column(&self) -> usize {
+        let line_start = self.text[..self.cursor]
+            .rfind('\n')
+            .map(|i| i + 1)
+            .unwrap_or(0);
+        self.cursor - line_start
+    }
+
+    fn prev_line_start(&self) -> Option<usize> {
+        let current_line_start = self.text[..self.cursor]
+            .rfind('\n')
+            .map(|i| i + 1)
+            .unwrap_or(0);
+        if current_line_start == 0 {
+            return None;
+        }
+        let prev_line_start = self.text[..current_line_start - 1]
+            .rfind('\n')
+            .map(|i| i + 1)
+            .unwrap_or(0);
+        Some(prev_line_start)
+    }
+
+    fn next_line_start(&self) -> Option<usize> {
+        self.text[self.cursor..]
+            .find('\n')
+            .map(|i| self.cursor + i + 1)
+            .filter(|&pos| pos <= self.text.len())
+    }
+
+    fn handle_key_down(
+        &mut self,
+        event: &KeyDownEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let keystroke = &event.keystroke;
+
+        // Handle special keys first
+        match keystroke.key.as_str() {
+            "backspace" => {
+                self.backspace(cx);
+                return;
+            }
+            "delete" => {
+                self.delete_forward(cx);
+                return;
+            }
+            "left" => {
+                self.move_left(cx);
+                return;
+            }
+            "right" => {
+                self.move_right(cx);
+                return;
+            }
+            "up" => {
+                self.move_up(cx);
+                return;
+            }
+            "down" => {
+                self.move_down(cx);
+                return;
+            }
+            "home" => {
+                self.move_to_start(cx);
+                return;
+            }
+            "end" => {
+                self.move_to_end(cx);
+                return;
+            }
+            "enter" => {
+                if self.multiline && !keystroke.modifiers.platform {
+                    self.insert_char("\n", cx);
+                } else if !self.multiline {
+                    cx.emit(TextInputEvent::Submit(self.text.clone()));
+                }
+                // cmd+enter is handled by the parent via actions
+                return;
+            }
+            "tab" => {
+                if self.multiline {
+                    self.insert_char("    ", cx);
+                    return;
+                }
+                // In single-line mode, let tab propagate for focus cycling
+                return;
+            }
+            "a" if keystroke.modifiers.platform => {
+                // Cmd+A: select all (move cursor to end for now)
+                self.cursor = self.text.len();
+                cx.notify();
+                return;
+            }
+            "v" if keystroke.modifiers.platform => {
+                // Cmd+V: paste from clipboard
+                if let Some(item) = cx.read_from_clipboard()
+                    && let Some(text) = item.text()
+                {
+                    self.insert_char(&text, cx);
+                }
+                return;
+            }
+            _ => {}
+        }
+
+        // Insert the character if available
+        if let Some(ref key_char) = keystroke.key_char
+            && !keystroke.modifiers.platform
+            && !keystroke.modifiers.control
+        {
+            self.insert_char(key_char, cx);
+        }
+    }
+
+    /// Render the text content with cursor visualization.
+    fn render_content(&self, window: &Window) -> impl IntoElement {
+        let is_focused = self.focus_handle.is_focused(window);
+
+        if self.text.is_empty() {
+            return div()
+                .text_color(rgb(0x555555))
+                .child(self.placeholder.clone());
+        }
+
+        // Build display strings
+        let (before_cursor, after_cursor) = if self.masked {
+            let chars_before = self.text[..self.cursor].chars().count();
+            let chars_after = self.text[self.cursor..].chars().count();
+            ("*".repeat(chars_before), "*".repeat(chars_after))
+        } else {
+            (
+                self.text[..self.cursor].to_string(),
+                self.text[self.cursor..].to_string(),
+            )
+        };
+
+        if !is_focused {
+            return div().child(format!("{before_cursor}{after_cursor}"));
+        }
+
+        // Show cursor as a blue bar between before and after
+        div()
+            .flex()
+            .flex_row()
+            .child(div().child(before_cursor))
+            .child(
+                div()
+                    .w(px(1.5))
+                    .h(px(16.0))
+                    .bg(rgb(0x4fc1ff))
+                    .flex_shrink_0(),
+            )
+            .child(div().child(after_cursor))
+    }
+}
+
+/// Events emitted by TextInput.
+#[derive(Debug, Clone)]
+pub enum TextInputEvent {
+    /// Text content changed.
+    Changed(String),
+    /// Enter pressed in single-line mode.
+    Submit(String),
+}
+
+impl EventEmitter<TextInputEvent> for TextInput {}
+
+impl Render for TextInput {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let is_focused = self.focus_handle.is_focused(window);
+
+        div()
+            .id("text-input")
+            .track_focus(&self.focus_handle)
+            .on_key_down(cx.listener(Self::handle_key_down))
+            .size_full()
+            .p_2()
+            .font_family("Monaco")
+            .text_sm()
+            .text_color(rgb(0xd4d4d4))
+            .bg(if is_focused {
+                rgb(0x1e1e1e)
+            } else {
+                rgb(0x252525)
+            })
+            .border_1()
+            .border_color(if is_focused {
+                rgb(0x4fc1ff)
+            } else {
+                rgb(0x3e3e3e)
+            })
+            .rounded_sm()
+            .overflow_hidden()
+            .child(self.render_content(window))
+    }
+}

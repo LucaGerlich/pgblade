@@ -1,0 +1,59 @@
+[workspace]
+resolver = "2"
+members = [
+	"crates/pgblade-app",
+	"crates/pgblade-core",
+	"crates/pgblade-postgres",
+	"crates/pgblade-security",
+	"crates/pgblade-ui",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+publish = false
+
+[workspace.dependencies]
+# Internal crates
+pgblade-core = { path = "crates/pgblade-core" }
+pgblade-postgres = { path = "crates/pgblade-postgres" }
+pgblade-security = { path = "crates/pgblade-security" }
+pgblade-ui = { path = "crates/pgblade-ui" }
+
+# GPUI ecosystem
+gpui = "0.2"
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+tokio-postgres = { version = "0.7", features = ["with-chrono-0_4", "with-serde_json-1", "with-uuid-1"] }
+futures = "0.3"
+
+# SQL parsing
+sqlparser = { version = "0.55", features = ["visitor"] }
+
+# Security
+keyring = "3"
+
+# Local storage
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+
+# Async traits
+async-trait = "0.1"
+
+# Error handling
+thiserror = "2"
+anyhow = "1"
+
+# Diagnostics
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Utilities
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }

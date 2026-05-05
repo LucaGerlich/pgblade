@@ -1,0 +1,282 @@
+use gpui::prelude::FluentBuilder;
+use gpui::*;
+
+use crate::actions::{ExecuteQuery, NewConnection, ToggleSidebar};
+use crate::controller::AppController;
+use crate::modals::connection_modal::{ConnectionModal, ConnectionModalEvent};
+use crate::panes::{EditorArea, ResultArea, SchemaSidebar, StatusBar, Toolbar};
+
+use pgblade_core::connection::ConnectionState;
+use pgblade_core::event::AppEvent;
+use pgblade_core::query::QueryState;
+
+pub struct Workspace {
+    controller: Entity<AppController>,
+    sidebar: Entity<SchemaSidebar>,
+    editor_area: Entity<EditorArea>,
+    result_area: Entity<ResultArea>,
+    toolbar: Entity<Toolbar>,
+    status_bar: Entity<StatusBar>,
+    connection_modal: Option<Entity<ConnectionModal>>,
+    sidebar_visible: bool,
+}
+
+impl Workspace {
+    pub fn new(cx: &mut Context<Self>) -> Self {
+        let controller = cx.new(|_| AppController::new());
+        let sidebar = cx.new(|_| SchemaSidebar::new());
+        let editor_area = cx.new(EditorArea::new);
+        let result_area = cx.new(|_| ResultArea::new());
+        let toolbar = cx.new(|_| Toolbar::new());
+        let status_bar = cx.new(|_| StatusBar::new());
+
+        // Subscribe to controller events
+        cx.subscribe(&controller, Self::handle_app_event).detach();
+
+        // Show connection modal on startup
+        let modal = cx.new(ConnectionModal::new);
+        cx.subscribe(&modal, Self::handle_modal_event).detach();
+        let connection_modal = Some(modal);
+
+        Self {
+            controller,
+            sidebar,
+            editor_area,
+            result_area,
+            toolbar,
+            status_bar,
+            connection_modal,
+            sidebar_visible: true,
+        }
+    }
+
+    fn toggle_sidebar(
+        &mut self,
+        _action: &ToggleSidebar,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.sidebar_visible = !self.sidebar_visible;
+        cx.notify();
+    }
+
+    fn handle_new_connection(
+        &mut self,
+        _action: &NewConnection,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.connection_modal.is_none() {
+            let modal = cx.new(ConnectionModal::new);
+            cx.subscribe(&modal, Self::handle_modal_event).detach();
+            self.connection_modal = Some(modal);
+            cx.notify();
+        }
+    }
+
+    fn handle_modal_event(
+        &mut self,
+        _modal: Entity<ConnectionModal>,
+        event: &ConnectionModalEvent,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            ConnectionModalEvent::Connect { profile, password } => {
+                self.controller.update(cx, |controller, cx| {
+                    controller.connect(profile.clone(), password.clone(), cx);
+                });
+                self.connection_modal = None;
+                cx.notify();
+            }
+            ConnectionModalEvent::Dismiss => {
+                self.connection_modal = None;
+                cx.notify();
+            }
+        }
+    }
+
+    fn handle_execute_query(
+        &mut self,
+        _action: &ExecuteQuery,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let sql = self.editor_area.read(cx).text(cx);
+        if sql.trim().is_empty() {
+            return;
+        }
+
+        // Show loading state in result area
+        self.result_area.update(cx, |result, cx| {
+            result.set_loading(cx);
+        });
+
+        // Execute via controller
+        self.controller.update(cx, |controller, cx| {
+            controller.execute_query(sql, cx);
+        });
+    }
+
+    fn handle_app_event(
+        &mut self,
+        _controller: Entity<AppController>,
+        event: &AppEvent,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            AppEvent::ConnectionStateChanged(state) => {
+                tracing::info!(?state, "connection state changed");
+                self.toolbar.update(cx, |toolbar, cx| {
+                    toolbar.set_connection_state(state.clone(), cx);
+                });
+                let status = match state {
+                    ConnectionState::Connected {
+                        database,
+                        server_version,
+                        ..
+                    } => {
+                        format!("Connected to {database} — {server_version}")
+                    }
+                    ConnectionState::Disconnected => "Disconnected".to_string(),
+                    ConnectionState::Connecting { .. } => "Connecting...".to_string(),
+                    ConnectionState::Failed { error, .. } => format!("Connection failed: {error}"),
+                };
+                self.status_bar.update(cx, |sb, cx| {
+                    sb.set_status(status, cx);
+                });
+                cx.notify();
+            }
+            AppEvent::QueryStateChanged { state, .. } => {
+                match state {
+                    QueryState::Executing { .. } => {
+                        self.status_bar.update(cx, |sb, cx| {
+                            sb.set_status("Executing...".to_string(), cx);
+                        });
+                    }
+                    QueryState::Failed { error, .. } => {
+                        self.result_area.update(cx, |result, cx| {
+                            result.set_error(error.clone(), cx);
+                        });
+                        self.status_bar.update(cx, |sb, cx| {
+                            sb.set_status(format!("Error: {error}"), cx);
+                        });
+                    }
+                    QueryState::Cancelled { .. } => {
+                        self.status_bar.update(cx, |sb, cx| {
+                            sb.set_status("Query cancelled".to_string(), cx);
+                        });
+                    }
+                    _ => {}
+                }
+                cx.notify();
+            }
+            AppEvent::ResultPageReady { page, .. } => {
+                let duration_ms = self
+                    .controller
+                    .read(cx)
+                    .active_query_state()
+                    .and_then(|s| s.elapsed_ms())
+                    .unwrap_or(0);
+
+                let row_count = page.rows.len();
+                let row_word = if row_count == 1 { "row" } else { "rows" };
+                self.status_bar.update(cx, |sb, cx| {
+                    sb.set_status(format!("{row_count} {row_word} in {duration_ms}ms"), cx);
+                });
+
+                self.result_area.update(cx, |result, cx| {
+                    result.set_results(page.columns.clone(), page.rows.clone(), duration_ms, cx);
+                });
+            }
+            AppEvent::WritePolicyChanged(_) => {
+                cx.notify();
+            }
+        }
+    }
+}
+
+impl Render for Workspace {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let has_modal = self.connection_modal.is_some();
+
+        div()
+            .id("workspace")
+            .key_context("Workspace")
+            .size_full()
+            .flex()
+            .flex_col()
+            .bg(rgb(0x1a1a1a))
+            .text_color(rgb(0xcccccc))
+            .on_action(cx.listener(Self::toggle_sidebar))
+            .on_action(cx.listener(Self::handle_execute_query))
+            .on_action(cx.listener(Self::handle_new_connection))
+            // Toolbar
+            .child(self.toolbar.clone())
+            // Main content area
+            .child(
+                div()
+                    .id("main-content")
+                    .flex_1()
+                    .flex()
+                    .flex_row()
+                    .overflow_hidden()
+                    // Sidebar (conditionally visible)
+                    .when(self.sidebar_visible, |this| {
+                        this.child(
+                            div()
+                                .id("sidebar-container")
+                                .w(px(260.0))
+                                .flex_shrink_0()
+                                .border_r_1()
+                                .border_color(rgb(0x333333))
+                                .bg(rgb(0x1e1e1e))
+                                .child(self.sidebar.clone()),
+                        )
+                    })
+                    // Center panel: editor (top) + results (bottom)
+                    .child(
+                        div()
+                            .id("center-panel")
+                            .flex_1()
+                            .flex()
+                            .flex_col()
+                            .overflow_hidden()
+                            // Editor area
+                            .child(
+                                div()
+                                    .id("editor-container")
+                                    .flex_1()
+                                    .min_h(px(200.0))
+                                    .border_b_1()
+                                    .border_color(rgb(0x333333))
+                                    .child(self.editor_area.clone()),
+                            )
+                            // Result area
+                            .child(
+                                div()
+                                    .id("result-container")
+                                    .flex_1()
+                                    .min_h(px(150.0))
+                                    .child(self.result_area.clone()),
+                            ),
+                    ),
+            )
+            // Status bar
+            .child(self.status_bar.clone())
+            // Modal overlay (if active)
+            .when(has_modal, |this| {
+                if let Some(modal) = &self.connection_modal {
+                    this.child(
+                        div()
+                            .absolute()
+                            .top_0()
+                            .left_0()
+                            .size_full()
+                            .child(modal.clone()),
+                    )
+                } else {
+                    this
+                }
+            })
+    }
+}

@@ -1,0 +1,18 @@
+[package]
+name = "pgblade-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "pgblade"
+path = "src/main.rs"
+
+[dependencies]
+pgblade-core = { workspace = true }
+pgblade-ui = { workspace = true }
+gpui = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
