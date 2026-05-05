@@ -352,44 +352,72 @@ impl TextInput {
                 .child(div().child(after_cursor));
         }
 
-        // Multiline mode with syntax highlighting
-        if !is_focused {
-            return self.render_highlighted_text(&self.text, 0);
+        // Multiline mode: render line by line with syntax highlighting.
+        // The cursor appears on the correct line at the correct column.
+        let lines: Vec<&str> = self.text.split('\n').collect();
+        let cursor_line = self.text[..self.cursor].matches('\n').count();
+        let cursor_col = self.current_column();
+
+        let mut container = div().flex().flex_col();
+
+        for (line_idx, line_text) in lines.iter().enumerate() {
+            if !is_focused || line_idx != cursor_line {
+                // Non-cursor line: render with full highlighting
+                container = container.child(
+                    div()
+                        .h(px(18.0))
+                        .flex()
+                        .flex_row()
+                        .child(self.render_line_highlighted(line_text, line_idx)),
+                );
+            } else {
+                // Cursor line: split at cursor column, insert cursor bar
+                let col = cursor_col.min(line_text.len());
+                let before = &line_text[..col];
+                let after = &line_text[col..];
+
+                container = container.child(
+                    div()
+                        .h(px(18.0))
+                        .flex()
+                        .flex_row()
+                        .child(self.render_line_highlighted(before, line_idx))
+                        .child(
+                            div()
+                                .w(px(1.5))
+                                .h(px(16.0))
+                                .bg(rgb(0x4fc1ff))
+                                .flex_shrink_0(),
+                        )
+                        .child(self.render_line_highlighted(after, line_idx)),
+                );
+            }
         }
 
-        // Focused: highlighted before + cursor + highlighted after
-        let before = &self.text[..self.cursor];
-        let after = &self.text[self.cursor..];
-
-        div()
-            .flex()
-            .flex_row()
-            .flex_wrap()
-            .child(self.render_highlighted_text(before, 0))
-            .child(
-                div()
-                    .w(px(1.5))
-                    .h(px(16.0))
-                    .bg(rgb(0x4fc1ff))
-                    .flex_shrink_0(),
-            )
-            .child(self.render_highlighted_text(after, self.cursor))
+        container
     }
 
-    /// Render a text slice with SQL syntax highlighting.
-    ///
-    /// Highlights are computed on the full `self.text` and then filtered
-    /// to the byte range `[offset, offset + text.len())`.
-    fn render_highlighted_text(&self, text: &str, offset: usize) -> Div {
-        if text.is_empty() {
+    /// Render a single line of text with syntax highlighting.
+    /// `line_text` is the content of one line (no newlines).
+    /// `line_idx` is used to compute the byte offset into `self.text`.
+    fn render_line_highlighted(&self, line_text: &str, line_idx: usize) -> Div {
+        if line_text.is_empty() {
             return div();
         }
 
+        // Calculate byte offset of this line in the full text
+        let offset = self
+            .text
+            .split('\n')
+            .take(line_idx)
+            .map(|l| l.len() + 1) // +1 for the \n
+            .sum::<usize>();
+
         let ranges = highlight_sql(&self.text);
         let start = offset;
-        let end = offset + text.len();
+        let end = offset + line_text.len();
 
-        let mut container = div().flex().flex_row().flex_wrap();
+        let mut container = div().flex().flex_row();
         let mut pos = start;
 
         for range in &ranges {
@@ -399,7 +427,6 @@ impl TextInput {
             let r_start = range.start.max(start);
             let r_end = range.end.min(end);
 
-            // Gap before this highlight (default text color)
             if pos < r_start {
                 container = container.child(
                     div()
