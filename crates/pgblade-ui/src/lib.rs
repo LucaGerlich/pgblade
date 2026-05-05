@@ -23,6 +23,8 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-n", actions::NewConnection, Some("Workspace")),
         KeyBinding::new("cmd-b", actions::ToggleSidebar, Some("Workspace")),
         KeyBinding::new("cmd-k", actions::ToggleCommandPalette, Some("Workspace")),
+        KeyBinding::new("cmd-t", actions::NewTab, Some("Workspace")),
+        KeyBinding::new("cmd-w", actions::CloseTab, Some("Workspace")),
     ]);
 }
 

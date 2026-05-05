@@ -1,4 +1,5 @@
 use gpui::*;
+use pgblade_core::highlighter::{TokenKind, highlight_sql};
 
 /// A reusable text input component with cursor movement and basic editing.
 ///
@@ -310,7 +311,7 @@ impl TextInput {
             }))
     }
 
-    /// Render the text content with cursor visualization.
+    /// Render the text content with cursor visualization and syntax highlighting.
     fn render_content(&self, window: &Window) -> impl IntoElement {
         let is_focused = self.focus_handle.is_focused(window);
 
@@ -320,27 +321,51 @@ impl TextInput {
                 .child(self.placeholder.clone());
         }
 
-        // Build display strings
-        let (before_cursor, after_cursor) = if self.masked {
-            let chars_before = self.text[..self.cursor].chars().count();
-            let chars_after = self.text[self.cursor..].chars().count();
-            ("*".repeat(chars_before), "*".repeat(chars_after))
-        } else {
-            (
-                self.text[..self.cursor].to_string(),
-                self.text[self.cursor..].to_string(),
-            )
-        };
+        // For masked or single-line inputs, no syntax highlighting
+        if self.masked || !self.multiline {
+            let (before_cursor, after_cursor) = if self.masked {
+                let chars_before = self.text[..self.cursor].chars().count();
+                let chars_after = self.text[self.cursor..].chars().count();
+                ("*".repeat(chars_before), "*".repeat(chars_after))
+            } else {
+                (
+                    self.text[..self.cursor].to_string(),
+                    self.text[self.cursor..].to_string(),
+                )
+            };
 
-        if !is_focused {
-            return div().child(format!("{before_cursor}{after_cursor}"));
+            if !is_focused {
+                return div().child(format!("{before_cursor}{after_cursor}"));
+            }
+
+            return div()
+                .flex()
+                .flex_row()
+                .child(div().child(before_cursor))
+                .child(
+                    div()
+                        .w(px(1.5))
+                        .h(px(16.0))
+                        .bg(rgb(0x4fc1ff))
+                        .flex_shrink_0(),
+                )
+                .child(div().child(after_cursor));
         }
 
-        // Show cursor as a blue bar between before and after
+        // Multiline mode with syntax highlighting
+        if !is_focused {
+            return self.render_highlighted_text(&self.text, 0);
+        }
+
+        // Focused: highlighted before + cursor + highlighted after
+        let before = &self.text[..self.cursor];
+        let after = &self.text[self.cursor..];
+
         div()
             .flex()
             .flex_row()
-            .child(div().child(before_cursor))
+            .flex_wrap()
+            .child(self.render_highlighted_text(before, 0))
             .child(
                 div()
                     .w(px(1.5))
@@ -348,7 +373,72 @@ impl TextInput {
                     .bg(rgb(0x4fc1ff))
                     .flex_shrink_0(),
             )
-            .child(div().child(after_cursor))
+            .child(self.render_highlighted_text(after, self.cursor))
+    }
+
+    /// Render a text slice with SQL syntax highlighting.
+    ///
+    /// Highlights are computed on the full `self.text` and then filtered
+    /// to the byte range `[offset, offset + text.len())`.
+    fn render_highlighted_text(&self, text: &str, offset: usize) -> Div {
+        if text.is_empty() {
+            return div();
+        }
+
+        let ranges = highlight_sql(&self.text);
+        let start = offset;
+        let end = offset + text.len();
+
+        let mut container = div().flex().flex_row().flex_wrap();
+        let mut pos = start;
+
+        for range in &ranges {
+            if range.end <= start || range.start >= end {
+                continue;
+            }
+            let r_start = range.start.max(start);
+            let r_end = range.end.min(end);
+
+            // Gap before this highlight (default text color)
+            if pos < r_start {
+                container = container.child(
+                    div()
+                        .text_color(rgb(0xd4d4d4))
+                        .child(self.text[pos..r_start].to_string()),
+                );
+            }
+
+            let color = token_color(range.kind);
+            container = container.child(
+                div()
+                    .text_color(color)
+                    .child(self.text[r_start..r_end].to_string()),
+            );
+            pos = r_end;
+        }
+
+        // Remaining text after last highlight
+        if pos < end {
+            container = container.child(
+                div()
+                    .text_color(rgb(0xd4d4d4))
+                    .child(self.text[pos..end].to_string()),
+            );
+        }
+
+        container
+    }
+}
+
+/// Map a token kind to its display color (VS Code dark theme inspired).
+fn token_color(kind: TokenKind) -> Hsla {
+    match kind {
+        TokenKind::Keyword => rgb(0x569cd6).into(),    // Blue
+        TokenKind::String => rgb(0xce9178).into(),     // Orange/brown
+        TokenKind::Number => rgb(0xb5cea8).into(),     // Light green
+        TokenKind::Comment => rgb(0x6a9955).into(),    // Green
+        TokenKind::Operator => rgb(0xd4d4d4).into(),   // Default
+        TokenKind::Identifier => rgb(0x9cdcfe).into(), // Light blue
     }
 }
 

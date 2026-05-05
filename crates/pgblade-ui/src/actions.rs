@@ -13,6 +13,10 @@ actions!(
         FocusEditor,
         FocusResults,
         SaveConnection,
+        NewTab,
+        CloseTab,
+        NextTab,
+        PrevTab,
     ]
 );
 

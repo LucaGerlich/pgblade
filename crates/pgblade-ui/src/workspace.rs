@@ -1,7 +1,9 @@
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 
-use crate::actions::{ExecuteQuery, NewConnection, ToggleCommandPalette, ToggleSidebar};
+use crate::actions::{
+    CloseTab, ExecuteQuery, NewConnection, NewTab, ToggleCommandPalette, ToggleSidebar,
+};
 use crate::controller::AppController;
 use crate::modals::command_palette::{CommandPalette, CommandPaletteEvent};
 use crate::modals::connection_modal::{ConnectionModal, ConnectionModalEvent};
@@ -31,7 +33,7 @@ impl Workspace {
         let controller = cx.new(|_| AppController::new());
         let sidebar = cx.new(SchemaSidebar::new);
         let editor_area = cx.new(EditorArea::new);
-        let result_area = cx.new(|_| ResultArea::new());
+        let result_area = cx.new(ResultArea::new);
         let toolbar = cx.new(|_| Toolbar::new());
         let status_bar = cx.new(|_| StatusBar::new());
 
@@ -241,6 +243,21 @@ impl Workspace {
         cx.notify();
     }
 
+    fn handle_new_tab(&mut self, _action: &NewTab, _window: &mut Window, cx: &mut Context<Self>) {
+        self.editor_area.update(cx, |editor, cx| editor.new_tab(cx));
+    }
+
+    fn handle_close_tab(
+        &mut self,
+        _action: &CloseTab,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let active_id = self.editor_area.read(cx).active_tab_id();
+        self.editor_area
+            .update(cx, |editor, cx| editor.close_tab(active_id, cx));
+    }
+
     fn handle_execute_query(
         &mut self,
         _action: &ExecuteQuery,
@@ -391,6 +408,8 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::handle_execute_query))
             .on_action(cx.listener(Self::handle_new_connection))
             .on_action(cx.listener(Self::handle_toggle_command_palette))
+            .on_action(cx.listener(Self::handle_new_tab))
+            .on_action(cx.listener(Self::handle_close_tab))
             // Toolbar
             .child(self.toolbar.clone())
             // Main content area

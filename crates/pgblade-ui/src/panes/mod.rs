@@ -2,6 +2,7 @@ mod editor_area;
 mod result_area;
 mod sidebar;
 mod status_bar;
+pub(crate) mod tab_bar;
 mod toolbar;
 
 pub use editor_area::EditorArea;
