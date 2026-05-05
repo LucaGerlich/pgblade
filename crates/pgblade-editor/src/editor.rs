@@ -287,7 +287,18 @@ impl SqlEditor {
 
     fn move_to_line_start(&mut self, extend: bool, cx: &mut Context<Self>) {
         let head = self.selection.head();
-        let new_pos = Position::new(head.line, 0);
+        let line_text = self.buffer.line(head.line);
+        let first_non_ws = line_text
+            .chars()
+            .position(|c| !c.is_whitespace())
+            .unwrap_or(0);
+        // Smart home: toggle between first non-whitespace and column 0
+        let target_col = if head.column == first_non_ws && first_non_ws > 0 {
+            0
+        } else {
+            first_non_ws
+        };
+        let new_pos = Position::new(head.line, target_col);
         self.move_cursor(new_pos, extend, cx);
     }
 
@@ -302,6 +313,164 @@ impl SqlEditor {
         let last_line = self.buffer.line_count().saturating_sub(1);
         let last_col = self.buffer.line_len(last_line);
         self.selection = Selection::range(Position::new(0, 0), Position::new(last_line, last_col));
+        cx.notify();
+    }
+
+    // --- Line manipulation ---
+
+    fn delete_line(&mut self, cx: &mut Context<Self>) {
+        self.history.begin_transaction(self.selection);
+        let line = self.selection.head().line;
+        let del_start = self.buffer.pos_to_char(Position::new(line, 0));
+        let del_end = if line + 1 < self.buffer.line_count() {
+            self.buffer.pos_to_char(Position::new(line + 1, 0))
+        } else {
+            self.buffer.len_chars()
+        };
+        if del_start < del_end {
+            let edit = self.buffer.delete(del_start, del_end);
+            self.history.record_edit(edit);
+        }
+        let new_line = line.min(self.buffer.line_count().saturating_sub(1));
+        self.selection.collapse_to(Position::new(new_line, 0));
+        self.history.end_transaction(self.selection);
+        cx.emit(SqlEditorEvent::Changed);
+        cx.notify();
+    }
+
+    fn duplicate_line(&mut self, cx: &mut Context<Self>) {
+        self.history.begin_transaction(self.selection);
+        let line = self.selection.head().line;
+        let text = self.buffer.line(line);
+        let line_start = self.buffer.pos_to_char(Position::new(line, 0));
+        let edit = self.buffer.insert(line_start, &format!("{text}\n"));
+        self.history.record_edit(edit);
+        let col = self.selection.head().column;
+        self.selection.collapse_to(Position::new(line + 1, col));
+        self.history.end_transaction(self.selection);
+        cx.emit(SqlEditorEvent::Changed);
+        cx.notify();
+    }
+
+    fn move_line_up(&mut self, cx: &mut Context<Self>) {
+        let line = self.selection.head().line;
+        if line == 0 {
+            return;
+        }
+        self.history.begin_transaction(self.selection);
+        let current = self.buffer.line(line);
+        let above = self.buffer.line(line - 1);
+        let start = self.buffer.pos_to_char(Position::new(line - 1, 0));
+        let end = if line + 1 < self.buffer.line_count() {
+            self.buffer.pos_to_char(Position::new(line + 1, 0))
+        } else {
+            self.buffer.len_chars()
+        };
+        let edit = self.buffer.delete(start, end);
+        self.history.record_edit(edit);
+        let swapped = if line < self.buffer.line_count() {
+            format!("{current}\n{above}\n")
+        } else {
+            format!("{current}\n{above}")
+        };
+        let edit = self.buffer.insert(start, &swapped);
+        self.history.record_edit(edit);
+        let col = self.selection.head().column.min(current.len());
+        self.selection.collapse_to(Position::new(line - 1, col));
+        self.history.end_transaction(self.selection);
+        cx.emit(SqlEditorEvent::Changed);
+        cx.notify();
+    }
+
+    fn move_line_down(&mut self, cx: &mut Context<Self>) {
+        let line = self.selection.head().line;
+        if line + 1 >= self.buffer.line_count() {
+            return;
+        }
+        self.history.begin_transaction(self.selection);
+        let current = self.buffer.line(line);
+        let below = self.buffer.line(line + 1);
+        let start = self.buffer.pos_to_char(Position::new(line, 0));
+        let end = if line + 2 < self.buffer.line_count() {
+            self.buffer.pos_to_char(Position::new(line + 2, 0))
+        } else {
+            self.buffer.len_chars()
+        };
+        let edit = self.buffer.delete(start, end);
+        self.history.record_edit(edit);
+        let swapped = if line + 2 <= self.buffer.line_count() {
+            format!("{below}\n{current}\n")
+        } else {
+            format!("{below}\n{current}")
+        };
+        let edit = self.buffer.insert(start, &swapped);
+        self.history.record_edit(edit);
+        let col = self.selection.head().column.min(current.len());
+        self.selection.collapse_to(Position::new(line + 1, col));
+        self.history.end_transaction(self.selection);
+        cx.emit(SqlEditorEvent::Changed);
+        cx.notify();
+    }
+
+    // --- Indent/Outdent ---
+
+    fn indent_selection(&mut self, cx: &mut Context<Self>) {
+        if self.selection.is_empty() {
+            self.insert_text("    ", cx);
+            return;
+        }
+        self.history.begin_transaction(self.selection);
+        let start_line = self.selection.start.line;
+        let end_line = self.selection.end.line;
+        // Insert 4 spaces at the start of each selected line (in reverse to keep offsets valid)
+        for line in (start_line..=end_line).rev() {
+            let offset = self.buffer.pos_to_char(Position::new(line, 0));
+            let edit = self.buffer.insert(offset, "    ");
+            self.history.record_edit(edit);
+        }
+        self.selection.start.column = self.selection.start.column.saturating_add(4);
+        self.selection.end.column = self.selection.end.column.saturating_add(4);
+        self.history.end_transaction(self.selection);
+        cx.emit(SqlEditorEvent::Changed);
+        cx.notify();
+    }
+
+    fn outdent_selection(&mut self, cx: &mut Context<Self>) {
+        self.history.begin_transaction(self.selection);
+        let start_line = self.selection.start.line;
+        let end_line = self.selection.end.line;
+        for line in (start_line..=end_line).rev() {
+            let line_text = self.buffer.line(line);
+            let spaces = line_text.chars().take(4).take_while(|c| *c == ' ').count();
+            if spaces > 0 {
+                let offset = self.buffer.pos_to_char(Position::new(line, 0));
+                let edit = self.buffer.delete(offset, offset + spaces);
+                self.history.record_edit(edit);
+            }
+        }
+        self.history.end_transaction(self.selection);
+        cx.emit(SqlEditorEvent::Changed);
+        cx.notify();
+    }
+
+    // --- Scroll ---
+
+    fn handle_scroll_wheel(
+        &mut self,
+        event: &ScrollWheelEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let delta_lines = match &event.delta {
+            ScrollDelta::Lines(delta) => -delta.y,
+            ScrollDelta::Pixels(delta) => {
+                let y: f32 = delta.y.into();
+                -(y / LINE_HEIGHT)
+            }
+        };
+        let max_offset = self.buffer.line_count().saturating_sub(1);
+        let new_offset = (self.scroll_offset as f32 + delta_lines).clamp(0.0, max_offset as f32);
+        self.scroll_offset = new_offset as usize;
         cx.notify();
     }
 
@@ -433,33 +602,46 @@ impl SqlEditor {
         let shift = ks.modifiers.shift;
 
         match ks.key.as_str() {
+            // Movement
             "left" if cmd => self.move_to_line_start(shift, cx),
             "left" if alt => self.move_word_left(shift, cx),
             "left" => self.move_left(shift, cx),
-
             "right" if cmd => self.move_to_line_end(shift, cx),
             "right" if alt => self.move_word_right(shift, cx),
             "right" => self.move_right(shift, cx),
-
+            "up" if alt => self.move_line_up(cx),
+            "down" if alt => self.move_line_down(cx),
             "up" => self.move_up(shift, cx),
             "down" => self.move_down(shift, cx),
-
             "home" => self.move_to_line_start(shift, cx),
             "end" => self.move_to_line_end(shift, cx),
 
+            // Editing
             "backspace" if alt => self.delete_word_backward(cx),
             "backspace" => self.backspace(cx),
-
             "delete" if alt => self.delete_word_forward(cx),
             "delete" => self.delete_forward(cx),
-
             "enter" if cmd => {
                 cx.emit(SqlEditorEvent::Execute(self.buffer.text()));
             }
-            "enter" => self.insert_text("\n", cx),
+            "enter" => {
+                // Auto-indent: preserve leading whitespace from current line
+                let line = self.selection.head().line;
+                let line_text = self.buffer.line(line);
+                let indent: String = line_text
+                    .chars()
+                    .take_while(|c| c.is_whitespace())
+                    .collect();
+                self.insert_text(&format!("\n{indent}"), cx);
+            }
+            "tab" if shift => self.outdent_selection(cx),
+            "tab" => self.indent_selection(cx),
 
-            "tab" => self.insert_text("    ", cx),
+            // Line manipulation
+            "k" if cmd && shift => self.delete_line(cx),
+            "d" if cmd && shift => self.duplicate_line(cx),
 
+            // Selection + clipboard
             "a" if cmd => self.select_all(cx),
             "c" if cmd => self.copy(cx),
             "x" if cmd => self.cut(cx),
@@ -468,12 +650,33 @@ impl SqlEditor {
             "z" if cmd => self.undo(cx),
 
             _ => {
-                // Insert printable character
+                // Auto-close brackets
                 if let Some(ref ch) = ks.key_char
                     && !cmd
                     && !ks.modifiers.control
                 {
-                    self.insert_text(ch, cx);
+                    let closer = match ch.as_str() {
+                        "(" => Some(")"),
+                        "[" => Some("]"),
+                        "{" => Some("}"),
+                        _ => None,
+                    };
+                    if let Some(close) = closer {
+                        if self.selection.is_empty() {
+                            self.insert_text(&format!("{ch}{close}"), cx);
+                            // Move cursor back between the brackets
+                            let offset = self.buffer.pos_to_char(self.selection.head());
+                            if offset > 0 {
+                                let pos = self.buffer.char_to_pos(offset - 1);
+                                self.selection.collapse_to(pos);
+                                cx.notify();
+                            }
+                        } else {
+                            self.insert_text(ch, cx);
+                        }
+                    } else {
+                        self.insert_text(ch, cx);
+                    }
                 }
             }
         }
@@ -736,6 +939,7 @@ impl Render for SqlEditor {
             .on_mouse_down(MouseButton::Left, cx.listener(Self::handle_mouse_down))
             .on_mouse_move(cx.listener(Self::handle_mouse_move))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::handle_mouse_up))
+            .on_scroll_wheel(cx.listener(Self::handle_scroll_wheel))
             .size_full()
             .flex()
             .flex_row()
