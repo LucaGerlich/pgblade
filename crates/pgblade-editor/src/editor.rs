@@ -30,6 +30,17 @@ pub struct SqlEditor {
     dragging: bool,
     gutter_width: f32,
     interactive: bool,
+    // Find bar state
+    find_query: String,
+    find_matches: Vec<(usize, usize)>, // (start_char, end_char) pairs
+    find_current: usize,
+    find_visible: bool,
+    find_focused: bool,
+    // Auto-completion state
+    completions: Vec<String>,
+    completion_visible: bool,
+    completion_selected: usize,
+    completion_prefix: String,
 }
 
 impl SqlEditor {
@@ -43,6 +54,15 @@ impl SqlEditor {
             dragging: false,
             gutter_width: GUTTER_BASE_WIDTH,
             interactive: true,
+            find_query: String::new(),
+            find_matches: Vec::new(),
+            find_current: 0,
+            find_visible: false,
+            find_focused: false,
+            completions: Vec::new(),
+            completion_visible: false,
+            completion_selected: 0,
+            completion_prefix: String::new(),
         }
     }
 
@@ -94,6 +114,7 @@ impl SqlEditor {
         self.selection.collapse_to(new_pos);
 
         self.history.end_transaction(self.selection);
+        self.update_completions();
         cx.emit(SqlEditorEvent::Changed);
         cx.notify();
     }
@@ -511,6 +532,148 @@ impl SqlEditor {
         }
     }
 
+    // --- Find bar ---
+
+    fn toggle_find(&mut self, cx: &mut Context<Self>) {
+        self.find_visible = !self.find_visible;
+        if self.find_visible {
+            self.find_focused = true;
+        } else {
+            self.find_focused = false;
+            self.find_matches.clear();
+            self.find_current = 0;
+        }
+        cx.notify();
+    }
+
+    fn update_find_matches(&mut self) {
+        self.find_matches.clear();
+        if self.find_query.is_empty() {
+            return;
+        }
+        let text = self.buffer.text();
+        let query_lower = self.find_query.to_lowercase();
+        let text_lower = text.to_lowercase();
+        let mut start = 0;
+        while let Some(pos) = text_lower[start..].find(&query_lower) {
+            let match_start = start + pos;
+            let match_end = match_start + self.find_query.len();
+            // Convert byte offsets to char offsets
+            let char_start = text[..match_start].chars().count();
+            let char_end = text[..match_end].chars().count();
+            self.find_matches.push((char_start, char_end));
+            start = match_end;
+        }
+        if self.find_current >= self.find_matches.len() {
+            self.find_current = 0;
+        }
+    }
+
+    fn find_next(&mut self, cx: &mut Context<Self>) {
+        if self.find_matches.is_empty() {
+            return;
+        }
+        self.find_current = (self.find_current + 1) % self.find_matches.len();
+        self.jump_to_current_match(cx);
+    }
+
+    fn find_prev(&mut self, cx: &mut Context<Self>) {
+        if self.find_matches.is_empty() {
+            return;
+        }
+        self.find_current = if self.find_current == 0 {
+            self.find_matches.len() - 1
+        } else {
+            self.find_current - 1
+        };
+        self.jump_to_current_match(cx);
+    }
+
+    fn jump_to_current_match(&mut self, cx: &mut Context<Self>) {
+        if let Some(&(start, end)) = self.find_matches.get(self.find_current) {
+            let start_pos = self.buffer.char_to_pos(start);
+            let end_pos = self.buffer.char_to_pos(end);
+            self.selection = Selection::range(start_pos, end_pos);
+            self.ensure_cursor_visible();
+            cx.notify();
+        }
+    }
+
+    // --- Auto-completion ---
+
+    pub fn set_completion_items(&mut self, items: Vec<String>, cx: &mut Context<Self>) {
+        self.completions = items;
+        cx.notify();
+    }
+
+    fn update_completions(&mut self) {
+        let offset = self.buffer.pos_to_char(self.selection.head());
+        let text = self.buffer.text();
+
+        // Find byte position of cursor
+        let byte_pos = text
+            .char_indices()
+            .take(offset)
+            .last()
+            .map(|(i, c)| i + c.len_utf8())
+            .unwrap_or(0);
+        let before_cursor = &text[..byte_pos];
+
+        let word_start = before_cursor
+            .rfind(|c: char| c.is_whitespace() || "(),;.".contains(c))
+            .map(|i| i + 1)
+            .unwrap_or(0);
+        let prefix = &before_cursor[word_start..];
+
+        if prefix.len() < 2 {
+            self.completion_visible = false;
+            self.completion_prefix.clear();
+            return;
+        }
+
+        self.completion_prefix = prefix.to_lowercase();
+        let has_matches = self
+            .completions
+            .iter()
+            .any(|item| item.to_lowercase().starts_with(&self.completion_prefix));
+
+        self.completion_visible = has_matches;
+        self.completion_selected = 0;
+    }
+
+    fn filtered_completions(&self) -> Vec<String> {
+        if self.completion_prefix.is_empty() {
+            return Vec::new();
+        }
+        self.completions
+            .iter()
+            .filter(|item| item.to_lowercase().starts_with(&self.completion_prefix))
+            .take(10)
+            .cloned()
+            .collect()
+    }
+
+    fn accept_completion(&mut self, cx: &mut Context<Self>) {
+        if !self.completion_visible {
+            return;
+        }
+        let filtered = self.filtered_completions();
+        if let Some(item) = filtered.get(self.completion_selected) {
+            let offset = self.buffer.pos_to_char(self.selection.head());
+            let prefix_char_len = self.completion_prefix.chars().count();
+            let start = offset.saturating_sub(prefix_char_len);
+            self.history.begin_transaction(self.selection);
+            let edit = self.buffer.replace(start, offset, item);
+            self.history.record_edit(edit);
+            let new_pos = self.buffer.char_to_pos(start + item.chars().count());
+            self.selection.collapse_to(new_pos);
+            self.history.end_transaction(self.selection);
+            cx.emit(SqlEditorEvent::Changed);
+        }
+        self.completion_visible = false;
+        cx.notify();
+    }
+
     // --- Scroll ---
 
     fn ensure_cursor_visible(&mut self) {
@@ -608,6 +771,78 @@ impl SqlEditor {
         let alt = ks.modifiers.alt;
         let shift = ks.modifiers.shift;
 
+        // Handle find bar key input when focused
+        if self.find_focused {
+            match ks.key.as_str() {
+                "escape" => {
+                    self.find_visible = false;
+                    self.find_focused = false;
+                    self.find_matches.clear();
+                    cx.notify();
+                }
+                "enter" if shift => self.find_prev(cx),
+                "enter" => self.find_next(cx),
+                "backspace" => {
+                    self.find_query.pop();
+                    self.update_find_matches();
+                    cx.notify();
+                }
+                "f" if cmd => {
+                    // Cmd+F while find is open: toggle focus back to editor
+                    self.find_focused = false;
+                    cx.notify();
+                }
+                _ => {
+                    if let Some(ref ch) = ks.key_char
+                        && !cmd
+                        && !ks.modifiers.control
+                    {
+                        self.find_query.push_str(ch);
+                        self.update_find_matches();
+                        if !self.find_matches.is_empty() {
+                            self.find_current = 0;
+                            self.jump_to_current_match(cx);
+                        }
+                        cx.notify();
+                    }
+                }
+            }
+            return;
+        }
+
+        // Handle completion navigation when visible
+        if self.completion_visible {
+            match ks.key.as_str() {
+                "up" => {
+                    if self.completion_selected > 0 {
+                        self.completion_selected -= 1;
+                    }
+                    cx.notify();
+                    return;
+                }
+                "down" => {
+                    let count = self.filtered_completions().len();
+                    if self.completion_selected + 1 < count {
+                        self.completion_selected += 1;
+                    }
+                    cx.notify();
+                    return;
+                }
+                "enter" | "tab" => {
+                    self.accept_completion(cx);
+                    return;
+                }
+                "escape" => {
+                    self.completion_visible = false;
+                    cx.notify();
+                    return;
+                }
+                _ => {
+                    // Fall through to normal handling; completions update after insert
+                }
+            }
+        }
+
         match ks.key.as_str() {
             // Movement
             "left" if cmd => self.move_to_line_start(shift, cx),
@@ -655,6 +890,9 @@ impl SqlEditor {
             "v" if cmd => self.paste(cx),
             "z" if cmd && shift => self.redo(cx),
             "z" if cmd => self.undo(cx),
+
+            // Find
+            "f" if cmd => self.toggle_find(cx),
 
             _ => {
                 // Auto-close brackets
@@ -908,17 +1146,98 @@ impl SqlEditor {
 
         container
     }
-}
 
-/// Map a token kind to its display color (VS Code dark theme inspired).
-fn token_color(kind: TokenKind) -> Hsla {
-    match kind {
-        TokenKind::Keyword => rgb(0x569cd6).into(),
-        TokenKind::String => rgb(0xce9178).into(),
-        TokenKind::Number => rgb(0xb5cea8).into(),
-        TokenKind::Comment => rgb(0x6a9955).into(),
-        TokenKind::Operator => rgb(0xd4d4d4).into(),
-        TokenKind::Identifier => rgb(0x9cdcfe).into(),
+    fn render_find_bar(&self) -> Div {
+        let match_info = if self.find_matches.is_empty() {
+            if self.find_query.is_empty() {
+                String::new()
+            } else {
+                "No matches".to_string()
+            }
+        } else {
+            format!("{}/{}", self.find_current + 1, self.find_matches.len())
+        };
+
+        let query_display = if self.find_query.is_empty() {
+            "Search...".to_string()
+        } else {
+            self.find_query.clone()
+        };
+
+        let border_color = if self.find_focused {
+            rgb(0x4fc1ff)
+        } else {
+            rgb(0x3e3e3e)
+        };
+
+        div()
+            .h(px(32.0))
+            .w_full()
+            .px_3()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_2()
+            .bg(rgb(0x252525))
+            .border_b_1()
+            .border_color(rgb(0x333333))
+            .flex_shrink_0()
+            .child(div().text_xs().text_color(rgb(0x888888)).child("Find:"))
+            .child(
+                div()
+                    .flex_1()
+                    .px_2()
+                    .py_1()
+                    .bg(rgb(0x1e1e1e))
+                    .border_1()
+                    .border_color(border_color)
+                    .rounded_sm()
+                    .text_xs()
+                    .text_color(rgb(0xd4d4d4))
+                    .child(query_display),
+            )
+            .child(div().text_xs().text_color(rgb(0x888888)).child(match_info))
+    }
+
+    fn render_completion_popup(&self) -> Div {
+        let filtered = self.filtered_completions();
+        let cursor = self.selection.head();
+        let cursor_y = (cursor.line.saturating_sub(self.scroll_offset) + 1) as f32 * LINE_HEIGHT
+            + if self.find_visible { 32.0 } else { 0.0 };
+        let cursor_x = self.gutter_width + 8.0 + cursor.column as f32 * 8.4;
+
+        let mut popup = div()
+            .absolute()
+            .top(px(cursor_y))
+            .left(px(cursor_x))
+            .w(px(220.0))
+            .bg(rgb(0x252525))
+            .border_1()
+            .border_color(rgb(0x444444))
+            .rounded_sm()
+            .overflow_hidden();
+
+        for (i, item) in filtered.iter().enumerate() {
+            let is_selected = i == self.completion_selected;
+            let bg = if is_selected {
+                rgb(0x333333)
+            } else {
+                rgb(0x252525)
+            };
+            popup = popup.child(
+                div()
+                    .h(px(24.0))
+                    .px_2()
+                    .flex()
+                    .items_center()
+                    .text_xs()
+                    .text_color(rgb(0xd4d4d4))
+                    .bg(bg)
+                    .child(item.clone()),
+            );
+        }
+
+        popup
     }
 }
 
@@ -939,21 +1258,24 @@ impl Render for SqlEditor {
             GUTTER_BASE_WIDTH
         };
 
-        let mut editor = div()
+        let find_visible = self.find_visible;
+        let completion_visible = self.completion_visible && !self.filtered_completions().is_empty();
+
+        // Outer container: flex_col to stack find bar above editor content
+        let mut outer = div()
             .id("sql-editor")
             .size_full()
             .flex()
-            .flex_row()
+            .flex_col()
             .bg(rgb(0x1e1e1e))
             .text_color(rgb(0xd4d4d4))
             .font_family("Monaco")
             .text_sm()
             .overflow_hidden()
-            .child(self.render_gutter(&display_lines))
-            .child(self.render_text_area(&display_lines));
+            .relative();
 
         if self.interactive {
-            editor = editor
+            outer = outer
                 .track_focus(&self.focus_handle)
                 .on_key_down(cx.listener(Self::handle_key_down))
                 .on_mouse_down(MouseButton::Left, cx.listener(Self::handle_mouse_down))
@@ -963,6 +1285,39 @@ impl Render for SqlEditor {
                 .cursor_text();
         }
 
-        editor
+        // Find bar (if visible)
+        if find_visible {
+            outer = outer.child(self.render_find_bar());
+        }
+
+        // Editor content: gutter + text area in a flex_row
+        outer = outer.child(
+            div()
+                .flex_1()
+                .flex()
+                .flex_row()
+                .overflow_hidden()
+                .child(self.render_gutter(&display_lines))
+                .child(self.render_text_area(&display_lines)),
+        );
+
+        // Completion popup (if visible)
+        if completion_visible {
+            outer = outer.child(self.render_completion_popup());
+        }
+
+        outer
+    }
+}
+
+/// Map a token kind to its display color (VS Code dark theme inspired).
+fn token_color(kind: TokenKind) -> Hsla {
+    match kind {
+        TokenKind::Keyword => rgb(0x569cd6).into(),
+        TokenKind::String => rgb(0xce9178).into(),
+        TokenKind::Number => rgb(0xb5cea8).into(),
+        TokenKind::Comment => rgb(0x6a9955).into(),
+        TokenKind::Operator => rgb(0xd4d4d4).into(),
+        TokenKind::Identifier => rgb(0x9cdcfe).into(),
     }
 }

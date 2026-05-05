@@ -416,6 +416,103 @@ impl Workspace {
                         sidebar.set_schema_tree(conn_id, tree, cx);
                     });
                 }
+
+                // Build completion items from schema
+                let mut items: Vec<String> = Vec::new();
+                for schema in &tree.schemas {
+                    for table in &schema.tables {
+                        items.push(table.info.name.clone());
+                        for col in &table.columns {
+                            items.push(col.name.clone());
+                        }
+                    }
+                    for view in &schema.views {
+                        items.push(view.info.name.clone());
+                        for col in &view.columns {
+                            items.push(col.name.clone());
+                        }
+                    }
+                    for mv in &schema.materialized_views {
+                        items.push(mv.info.name.clone());
+                        for col in &mv.columns {
+                            items.push(col.name.clone());
+                        }
+                    }
+                    for func in &schema.functions {
+                        items.push(func.name.clone());
+                    }
+                    for seq in &schema.sequences {
+                        items.push(seq.name.clone());
+                    }
+                }
+                // Add common SQL keywords
+                items.extend(
+                    [
+                        "SELECT",
+                        "FROM",
+                        "WHERE",
+                        "AND",
+                        "OR",
+                        "NOT",
+                        "IN",
+                        "JOIN",
+                        "LEFT",
+                        "RIGHT",
+                        "INNER",
+                        "OUTER",
+                        "ON",
+                        "GROUP",
+                        "BY",
+                        "ORDER",
+                        "ASC",
+                        "DESC",
+                        "HAVING",
+                        "LIMIT",
+                        "OFFSET",
+                        "INSERT",
+                        "INTO",
+                        "VALUES",
+                        "UPDATE",
+                        "SET",
+                        "DELETE",
+                        "CREATE",
+                        "DROP",
+                        "ALTER",
+                        "TABLE",
+                        "INDEX",
+                        "VIEW",
+                        "AS",
+                        "DISTINCT",
+                        "COUNT",
+                        "SUM",
+                        "AVG",
+                        "MIN",
+                        "MAX",
+                        "BETWEEN",
+                        "LIKE",
+                        "ILIKE",
+                        "IS",
+                        "NULL",
+                        "TRUE",
+                        "FALSE",
+                        "CASE",
+                        "WHEN",
+                        "THEN",
+                        "ELSE",
+                        "END",
+                        "EXISTS",
+                        "WITH",
+                        "UNION",
+                        "RETURNING",
+                    ]
+                    .iter()
+                    .map(|s| s.to_string()),
+                );
+                items.sort();
+                items.dedup();
+
+                self.editor_area
+                    .update(cx, |editor, cx| editor.set_completions(items, cx));
             }
             AppEvent::SavedConnectionsLoaded(connections) => {
                 self.sidebar.update(cx, |sidebar, cx| {

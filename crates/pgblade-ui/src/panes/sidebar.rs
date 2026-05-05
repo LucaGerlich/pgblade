@@ -43,10 +43,10 @@ impl SchemaSidebar {
                 if let Some(profile) = this.find_connection(conn_id_str) {
                     cx.emit(SidebarEvent::EditConnection(profile));
                 }
-            } else if let Some(conn_id_str) = id.strip_prefix("delete:") {
-                if let Some(profile) = this.find_connection(conn_id_str) {
-                    cx.emit(SidebarEvent::DeleteConnection(profile.id));
-                }
+            } else if let Some(conn_id_str) = id.strip_prefix("delete:")
+                && let Some(profile) = this.find_connection(conn_id_str)
+            {
+                cx.emit(SidebarEvent::DeleteConnection(profile.id));
             }
         })
         .detach();
@@ -79,6 +79,7 @@ impl SchemaSidebar {
         self.rebuild_tree(cx);
     }
 
+    #[allow(dead_code)]
     pub fn clear_schema(&mut self, cx: &mut Context<Self>) {
         self.active_connection_id = None;
         self.schema_tree = None;

@@ -82,6 +82,14 @@ impl EditorArea {
         }
     }
 
+    pub fn set_completions(&mut self, items: Vec<String>, cx: &mut Context<Self>) {
+        for tab in &self.tabs {
+            tab.editor.update(cx, |editor, cx| {
+                editor.set_completion_items(items.clone(), cx);
+            });
+        }
+    }
+
     pub fn new_tab(&mut self, cx: &mut Context<Self>) {
         let tab = Self::create_tab(cx);
         self.tabs.push(tab);
