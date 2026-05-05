@@ -490,10 +490,15 @@ impl Render for Workspace {
                 if let Some(modal) = &self.connection_modal {
                     this.child(
                         div()
+                            .id("connection-overlay")
                             .absolute()
                             .top_0()
                             .left_0()
                             .size_full()
+                            .on_mouse_down(MouseButton::Left, |_, _, _| {})
+                            .on_mouse_up(MouseButton::Left, |_, _, _| {})
+                            .on_mouse_move(|_, _, _| {})
+                            .on_scroll_wheel(|_, _, _| {})
                             .child(modal.clone()),
                     )
                 } else {
@@ -505,10 +510,15 @@ impl Render for Workspace {
                 if let Some(modal) = &self.write_confirm_modal {
                     this.child(
                         div()
+                            .id("write-confirm-overlay")
                             .absolute()
                             .top_0()
                             .left_0()
                             .size_full()
+                            .on_mouse_down(MouseButton::Left, |_, _, _| {})
+                            .on_mouse_up(MouseButton::Left, |_, _, _| {})
+                            .on_mouse_move(|_, _, _| {})
+                            .on_scroll_wheel(|_, _, _| {})
                             .child(modal.clone()),
                     )
                 } else {
@@ -520,10 +530,15 @@ impl Render for Workspace {
                 if let Some(palette) = &self.command_palette {
                     this.child(
                         div()
+                            .id("command-palette-overlay")
                             .absolute()
                             .top_0()
                             .left_0()
                             .size_full()
+                            .on_mouse_down(MouseButton::Left, |_, _, _| {})
+                            .on_mouse_up(MouseButton::Left, |_, _, _| {})
+                            .on_mouse_move(|_, _, _| {})
+                            .on_scroll_wheel(|_, _, _| {})
                             .child(palette.clone()),
                     )
                 } else {
