@@ -1,12 +1,13 @@
 use gpui::*;
 use uuid::Uuid;
 
-use crate::components::TextInput;
+use pgblade_editor::{SqlEditor, SqlEditorEvent};
+
 use crate::panes::tab_bar::{TabBar, TabBarEvent, TabInfo};
 
 struct QueryTab {
     id: Uuid,
-    input: Entity<TextInput>,
+    editor: Entity<SqlEditor>,
 }
 
 pub struct EditorArea {
@@ -19,6 +20,7 @@ pub struct EditorArea {
 #[allow(dead_code)]
 pub enum EditorEvent {
     TabChanged(Uuid),
+    Execute(String),
 }
 
 impl EventEmitter<EditorEvent> for EditorArea {}
@@ -39,18 +41,27 @@ impl EditorArea {
     }
 
     fn create_tab(cx: &mut Context<Self>) -> QueryTab {
-        let input = cx.new(|cx| {
-            TextInput::new(cx, true)
-                .with_placeholder("-- Type your SQL here\n-- Press Cmd+Enter to execute")
-        });
+        let editor = cx.new(SqlEditor::new);
+        cx.subscribe(
+            &editor,
+            |this, _editor, event: &SqlEditorEvent, cx| match event {
+                SqlEditorEvent::Execute(sql) => {
+                    cx.emit(EditorEvent::Execute(sql.clone()));
+                }
+                SqlEditorEvent::Changed => {
+                    this.sync_tab_bar(cx);
+                }
+            },
+        )
+        .detach();
         QueryTab {
             id: Uuid::new_v4(),
-            input,
+            editor,
         }
     }
 
     pub fn text(&self, cx: &App) -> String {
-        self.tabs[self.active_tab].input.read(cx).text().to_string()
+        self.tabs[self.active_tab].editor.read(cx).text()
     }
 
     pub fn active_tab_id(&self) -> Uuid {
@@ -59,7 +70,7 @@ impl EditorArea {
 
     #[allow(dead_code)]
     pub fn focus(&self, window: &mut Window, cx: &App) {
-        self.tabs[self.active_tab].input.read(cx).focus(window);
+        self.tabs[self.active_tab].editor.read(cx).focus(window);
     }
 
     pub fn new_tab(&mut self, cx: &mut Context<Self>) {
@@ -102,7 +113,7 @@ impl EditorArea {
             .enumerate()
             .map(|(i, tab)| {
                 let label = tab
-                    .input
+                    .editor
                     .read(cx)
                     .text()
                     .lines()
@@ -143,7 +154,7 @@ impl EditorArea {
 
 impl Render for EditorArea {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        let active_input = self.tabs[self.active_tab].input.clone();
+        let active_editor = self.tabs[self.active_tab].editor.clone();
 
         div()
             .id("editor-area")
@@ -151,6 +162,6 @@ impl Render for EditorArea {
             .flex()
             .flex_col()
             .child(self.tab_bar.clone())
-            .child(div().flex_1().child(active_input))
+            .child(div().flex_1().child(active_editor))
     }
 }

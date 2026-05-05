@@ -8,6 +8,7 @@ use crate::controller::AppController;
 use crate::modals::command_palette::{CommandPalette, CommandPaletteEvent};
 use crate::modals::connection_modal::{ConnectionModal, ConnectionModalEvent};
 use crate::modals::write_confirm::{WriteConfirmEvent, WriteConfirmModal};
+use crate::panes::editor_area::EditorEvent;
 use crate::panes::{EditorArea, ResultArea, SchemaSidebar, SidebarEvent, StatusBar, Toolbar};
 
 use pgblade_core::connection::ConnectionState;
@@ -42,6 +43,10 @@ impl Workspace {
 
         // Subscribe to sidebar events
         cx.subscribe(&sidebar, Self::handle_sidebar_event).detach();
+
+        // Subscribe to editor area events (Execute from SqlEditor)
+        cx.subscribe(&editor_area, Self::handle_editor_event)
+            .detach();
 
         // Load saved connections and history on startup
         controller.update(cx, |c, cx| {
@@ -215,6 +220,26 @@ impl Workspace {
                     c.preview_table(schema_clone, table_clone, cx);
                 });
             }
+        }
+    }
+
+    fn handle_editor_event(
+        &mut self,
+        _editor: Entity<EditorArea>,
+        event: &EditorEvent,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            EditorEvent::Execute(sql) => {
+                if sql.trim().is_empty() {
+                    return;
+                }
+                self.result_area
+                    .update(cx, |result, cx| result.set_loading(cx));
+                let sql = sql.clone();
+                self.controller.update(cx, |c, cx| c.execute_query(sql, cx));
+            }
+            EditorEvent::TabChanged(_) => {}
         }
     }
 

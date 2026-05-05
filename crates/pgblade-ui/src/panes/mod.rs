@@ -1,4 +1,4 @@
-mod editor_area;
+pub(crate) mod editor_area;
 mod result_area;
 mod sidebar;
 mod status_bar;

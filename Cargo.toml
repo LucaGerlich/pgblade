@@ -3,6 +3,7 @@ resolver = "2"
 members = [
 	"crates/pgblade-app",
 	"crates/pgblade-core",
+	"crates/pgblade-editor",
 	"crates/pgblade-postgres",
 	"crates/pgblade-security",
 	"crates/pgblade-ui",
@@ -58,3 +59,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 dirs = "5"
+
+# Editor
+ropey = "1.6"
+pgblade-editor = { path = "crates/pgblade-editor" }
