@@ -172,15 +172,19 @@ impl Render for ConnectionModal {
             .items_center()
             .justify_center()
             .bg(rgba(0x000000aa))
-            .on_mouse_down(MouseButton::Left, |_, _, _| {
-                // Consume click so it doesn't reach the editor behind
-            })
+            .on_mouse_down(MouseButton::Left, |_, _, _| {})
             .on_mouse_down(MouseButton::Right, |_, _, _| {})
+            .on_click(cx.listener(|_this, _, _window, cx| {
+                cx.emit(ConnectionModalEvent::Dismiss);
+            }))
             // Modal card
             .child(
                 div()
                     .id("connection-modal")
                     .track_focus(&self.focus_handle)
+                    .on_click(|_, _, _| {
+                        // Stop click from reaching backdrop dismiss handler
+                    })
                     .on_key_down(cx.listener(|_this, event: &KeyDownEvent, _window, cx| {
                         if event.keystroke.key.as_str() == "escape" {
                             cx.emit(ConnectionModalEvent::Dismiss);
@@ -194,14 +198,36 @@ impl Render for ConnectionModal {
                     .rounded_md()
                     .flex()
                     .flex_col()
-                    // Title
+                    // Title bar with close button
                     .child(
                         div()
-                            .text_base()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(rgb(0xeeeeee))
+                            .flex()
+                            .flex_row()
+                            .items_center()
                             .mb_4()
-                            .child("Connect to PostgreSQL"),
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .text_base()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(rgb(0xeeeeee))
+                                    .child("Connect to PostgreSQL"),
+                            )
+                            .child(
+                                div()
+                                    .id("close-modal-btn")
+                                    .px_2()
+                                    .py_1()
+                                    .rounded_sm()
+                                    .text_sm()
+                                    .text_color(rgb(0x888888))
+                                    .hover(|s| s.text_color(rgb(0xeeeeee)).bg(rgb(0x333333)))
+                                    .cursor_pointer()
+                                    .on_click(cx.listener(|_this, _, _window, cx| {
+                                        cx.emit(ConnectionModalEvent::Dismiss);
+                                    }))
+                                    .child("x"),
+                            ),
                     )
                     // Fields
                     .child(
